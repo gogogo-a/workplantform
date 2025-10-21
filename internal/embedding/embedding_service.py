@@ -7,6 +7,13 @@ from typing import List, Union, Optional
 import numpy as np
 import logging
 
+from pkg.model_list import (
+    get_embedding_model, 
+    list_embedding_models, 
+    ModelManager,
+    BGE_LARGE_ZH_V1_5  # 默认模型配置
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -16,48 +23,31 @@ class EmbeddingService:
     _instance: Optional['EmbeddingService'] = None
     _initialized: bool = False
     
-    # 支持的模型配置
-    MODELS = {
-        "bge-large-zh-v1.5": {
-            "model_name": "BAAI/bge-large-zh-v1.5",
-            "dimension": 1024,
-            "max_length": 512,
-            "description": "BAAI 出品，中文效果最好"
-        },
-        "bge-base-zh-v1.5": {
-            "model_name": "BAAI/bge-base-zh-v1.5",
-            "dimension": 768,
-            "max_length": 512,
-            "description": "速度快，效果好"
-        },
-        "text2vec-base-chinese": {
-            "model_name": "shibing624/text2vec-base-chinese",
-            "dimension": 768,
-            "max_length": 512,
-            "description": "轻量级中文模型"
-        }
-    }
-    
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
     
-    def __init__(self, model_name: str = "bge-large-zh-v1.5", device: str = "cpu"):
+    def __init__(self, model_name: Optional[str] = None, device: str = "cpu"):
         """
         初始化 Embedding 服务
         
         Args:
-            model_name: 模型名称
+            model_name: 模型名称，如果为 None 则使用 BGE_LARGE_ZH_V1_5
             device: 设备 (cpu/cuda/mps)
         """
         # 只初始化一次
         if EmbeddingService._initialized:
             return
+        
+        # 如果没有指定模型，使用默认配置
+        if model_name is None:
+            model_name = BGE_LARGE_ZH_V1_5.name
             
         self.model_name = model_name
         self.device = device
         self.model = None
+        self.model_config = None
         self.dimension = None
         self.max_length = None
         EmbeddingService._initialized = True
@@ -70,21 +60,18 @@ class EmbeddingService:
             return
         
         try:
-            if self.model_name not in self.MODELS:
-                raise ValueError(f"不支持的模型: {self.model_name}")
+            # 从统一配置中获取模型配置
+            self.model_config = get_embedding_model(self.model_name)
             
-            model_config = self.MODELS[self.model_name]
-            model_path = model_config["model_name"]
+            logger.info(f"正在加载模型: {self.model_config.model_path}")
+            logger.info(f"描述: {self.model_config.description}")
+            logger.info(f"维度: {self.model_config.dimension}")
+            logger.info(f"最大长度: {self.model_config.max_length}")
             
-            logger.info(f"正在加载模型: {model_path}")
-            logger.info(f"描述: {model_config['description']}")
-            logger.info(f"维度: {model_config['dimension']}")
-            logger.info(f"最大长度: {model_config['max_length']}")
-            
-            # 加载模型
-            self.model = SentenceTransformer(model_path, device=self.device)
-            self.dimension = model_config["dimension"]
-            self.max_length = model_config["max_length"]
+            # 使用统一管理器加载模型
+            self.model = ModelManager.select_embedding_model(self.model_name, self.device)
+            self.dimension = self.model_config.dimension
+            self.max_length = self.model_config.max_length
             
             logger.info(f"✓ 模型加载成功: {self.model_name}")
             logger.info(f"✓ 使用设备: {self.device}")
@@ -229,32 +216,28 @@ class EmbeddingService:
     
     def get_model_info(self) -> dict:
         """获取模型信息"""
-        if self.model_name not in self.MODELS:
-            return {}
-        
-        config = self.MODELS[self.model_name]
-        return {
-            "model_name": self.model_name,
-            "model_path": config["model_name"],
-            "dimension": self.dimension or config["dimension"],
-            "max_length": self.max_length or config["max_length"],
-            "description": config["description"],
-            "device": self.device,
-            "loaded": self.model is not None
-        }
+        try:
+            if self.model_config is None:
+                self.model_config = get_embedding_model(self.model_name)
+            
+            return {
+                "model_name": self.model_name,
+                "model_path": self.model_config.model_path,
+                "dimension": self.dimension or self.model_config.dimension,
+                "max_length": self.max_length or self.model_config.max_length,
+                "description": self.model_config.description,
+                "device": self.device,
+                "loaded": self.model is not None
+            }
+        except Exception as e:
+            return {"error": str(e)}
     
     @classmethod
     def list_available_models(cls) -> List[dict]:
         """列出所有可用模型"""
-        return [
-            {
-                "name": name,
-                **config
-            }
-            for name, config in cls.MODELS.items()
-        ]
+        return [config.to_dict() for config in list_embedding_models()]
 
 
-# 创建全局单例实例
-embedding_service = EmbeddingService(model_name="bge-large-zh-v1.5")
+# 创建全局单例实例（使用默认模型 BGE_LARGE_ZH_V1_5）
+embedding_service = EmbeddingService()
 

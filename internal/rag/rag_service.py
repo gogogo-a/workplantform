@@ -1,62 +1,135 @@
 """
 RAG 服务
-整合文档处理、向量化、存储、检索
+专注于向量检索和上下文生成
+
+特性：
+1. 向量检索
+2. Reranker 重排序（可选）
+3. 智能去重：自动过滤分数差异 <= 0.02 (相似度 >= 98%) 的重复文档
+4. 返回指定数量的最相关不重复文档
+
+注意：文档的加载、分割、向量化和存储请使用 document_processor.add_documents()
 """
 from typing import List, Dict, Any, Optional
 import logging
 
-from internal.document.document_processor import document_processor
 from internal.embedding.embedding_service import embedding_service
 from internal.db.milvus import milvus_client
 from internal.reranker.reranker_service import reranker_service
+from pkg.model_list import BGE_LARGE_ZH_V1_5, BGE_RERANKER_V2_M3  # 默认模型配置
 
 logger = logging.getLogger(__name__)
 
 
 class RAGService:
-    """RAG 服务类"""
+    """RAG 服务类 - 专注于检索功能"""
     
     def __init__(
         self,
         collection_name: str = "documents",
-        embedding_model: str = "bge-large-zh-v1.5",
-        reranker_model: str = "bge-reranker-v2-m3",
-        chunk_size: int = 500,
-        chunk_overlap: int = 50,
+        embedding_model: Optional[str] = None,
+        reranker_model: Optional[str] = None,
         top_k: int = 5,
         use_reranker: bool = True
     ):
         """
-        初始化 RAG 服务
+        初始化 RAG 服务（仅检索功能）
         
         Args:
             collection_name: Milvus 集合名称
-            embedding_model: Embedding 模型名称
-            reranker_model: Reranker 模型名称
-            chunk_size: 文档分块大小
-            chunk_overlap: 分块重叠大小
+            embedding_model: Embedding 模型名称，如果为 None 则使用 BGE_LARGE_ZH_V1_5
+            reranker_model: Reranker 模型名称，如果为 None 则使用 BGE_RERANKER_V2_M3
             top_k: 检索返回结果数量
             use_reranker: 是否使用 Reranker
         """
+        # 如果没有指定模型，使用默认配置
+        if embedding_model is None:
+            embedding_model = BGE_LARGE_ZH_V1_5.name
+        if reranker_model is None:
+            reranker_model = BGE_RERANKER_V2_M3.name
+        
         self.collection_name = collection_name
         self.embedding_model = embedding_model
         self.reranker_model = reranker_model
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
         self.top_k = top_k
         self.use_reranker = use_reranker
         
-        # 初始化组件
-        self.doc_processor = document_processor
+        # 初始化检索相关组件
         self.embedder = embedding_service
         self.vector_db = milvus_client
         self.reranker = reranker_service if use_reranker else None
         
-        logger.info(f"RAG 服务已初始化")
+        logger.info(f"RAG 检索服务已初始化")
         logger.info(f"  集合名称: {collection_name}")
         logger.info(f"  Embedding 模型: {embedding_model}")
         logger.info(f"  Reranker 模型: {reranker_model if use_reranker else '未启用'}")
-        logger.info(f"  分块大小: {chunk_size}")
+    
+    def _deduplicate_results(
+        self,
+        results: List[Dict[str, Any]],
+        score_diff_threshold: float = 0.02,
+        target_count: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        去重检索结果：过滤掉分数极其接近的重复文档
+        
+        判定标准：
+        - 分数完全相同
+        - 或者分数差异 <= 0.02（意味着相似度 >= 98%）
+        
+        Args:
+            results: 检索结果列表（必须包含分数字段）
+            score_diff_threshold: 分数差异阈值，默认0.02（2%）
+            target_count: 目标返回数量
+            
+        Returns:
+            List[Dict]: 去重后的结果列表
+        """
+        if not results:
+            return []
+        
+        # 确定使用哪个分数字段（优先使用 rerank_score）
+        score_field = "rerank_score" if "rerank_score" in results[0] else "vector_score"
+        
+        # 按分数降序排序（确保高分在前）
+        sorted_results = sorted(results, key=lambda x: x.get(score_field, 0), reverse=True)
+        
+        deduplicated = []
+        
+        for current in sorted_results:
+            current_score = current.get(score_field, 0)
+            is_duplicate = False
+            
+            # 检查是否与已选中的文档重复
+            for selected in deduplicated:
+                selected_score = selected.get(score_field, 0)
+                
+                # 计算分数差异（绝对值）
+                score_diff = abs(current_score - selected_score)
+                
+                # 如果分数差异小于等于阈值，认为是重复
+                # 例如：0.95 和 0.94 差异为 0.01 < 0.02，判定为重复
+                if score_diff <= score_diff_threshold:
+                    is_duplicate = True
+                    similarity_pct = (1 - score_diff) * 100
+                    logger.debug(
+                        f"去重：文档 {current.get('id')} (分数: {current_score:.4f}) "
+                        f"与 {selected.get('id')} (分数: {selected_score:.4f}) "
+                        f"差异: {score_diff:.4f} (相似度: {similarity_pct:.1f}%)，判定为重复"
+                    )
+                    break
+            
+            # 如果不是重复，添加到结果中
+            if not is_duplicate:
+                deduplicated.append(current)
+                
+                # 如果已达到目标数量，停止
+                if len(deduplicated) >= target_count:
+                    break
+        
+        logger.info(f"✓ 去重完成：{len(results)} -> {len(deduplicated)} 个文档")
+        
+        return deduplicated
     
     def initialize(self):
         """初始化所有组件"""
@@ -88,86 +161,10 @@ class RAGService:
             else:
                 logger.info(f"使用现有集合: {self.collection_name}")
             
-            logger.info("✓ RAG 服务初始化完成")
+            logger.info("✓ RAG 检索服务初始化完成")
             
         except Exception as e:
-            logger.error(f"✗ RAG 服务初始化失败: {e}")
-            raise
-    
-    def add_documents(
-        self,
-        file_paths: List[str],
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        添加文档到向量数据库
-        
-        Args:
-            file_paths: 文档路径列表
-            metadata: 额外的元数据
-            
-        Returns:
-            Dict: 添加结果统计
-        """
-        try:
-            logger.info(f"开始处理 {len(file_paths)} 个文档...")
-            
-            # 1. 处理文档（加载 + 分割）
-            all_chunks = self.doc_processor.batch_process_documents(file_paths)
-            
-            if not all_chunks:
-                logger.warning("没有文档块需要处理")
-                return {"success": False, "message": "没有文档块"}
-            
-            # 2. 提取文本和元数据
-            texts = [chunk["content"] for chunk in all_chunks]
-            chunk_metadata = []
-            for chunk in all_chunks:
-                meta = chunk["metadata"].copy()
-                if metadata:
-                    meta.update(metadata)
-                chunk_metadata.append(meta)
-            
-            logger.info(f"共 {len(texts)} 个文本块待向量化...")
-            
-            # 3. 向量化
-            embeddings = self.embedder.encode_documents(
-                documents=texts,
-                batch_size=32,
-                normalize=True,
-                show_progress=True
-            )
-            
-            logger.info(f"向量化完成，共 {len(embeddings)} 个向量")
-            
-            # 4. 存储到 Milvus
-            logger.info(f"存储到 Milvus 集合: {self.collection_name}")
-            ids = self.vector_db.insert_vectors(
-                collection_name=self.collection_name,
-                embeddings=embeddings.tolist(),
-                texts=texts,
-                metadata=chunk_metadata
-            )
-            
-            # 5. 统计信息
-            stats = {
-                "success": True,
-                "total_documents": len(file_paths),
-                "total_chunks": len(texts),
-                "total_vectors": len(ids),
-                "dimension": self.embedder.dimension,
-                "collection": self.collection_name
-            }
-            
-            logger.info(f"✓ 文档添加完成")
-            logger.info(f"  文档数: {stats['total_documents']}")
-            logger.info(f"  文本块数: {stats['total_chunks']}")
-            logger.info(f"  向量数: {stats['total_vectors']}")
-            
-            return stats
-            
-        except Exception as e:
-            logger.error(f"✗ 添加文档失败: {e}")
+            logger.error(f"✗ RAG 检索服务初始化失败: {e}")
             raise
     
     def search(
@@ -177,21 +174,27 @@ class RAGService:
         filter_metadata: Optional[Dict[str, Any]] = None,
         use_reranker: Optional[bool] = None,
         rerank_top_k: Optional[int] = None,
-        rerank_score_threshold: float = 0.0
+        rerank_score_threshold: float = -100.0  # BGE reranker 输出 logits，可以是负数
     ) -> List[Dict[str, Any]]:
         """
-        搜索相关文档（包含可选的 Rerank 步骤）
+        搜索相关文档（包含 Rerank 和去重）
+        
+        流程：
+        1. 向量检索
+        2. Rerank 重排序（可选）
+        3. 去重：过滤分数差异 <= 0.02 (相似度 >= 98%) 的重复文档
+        4. 返回最多 top_k 个最相关的不重复文档
         
         Args:
             query: 查询文本
             top_k: 初始向量检索返回结果数量（会被 Reranker 处理）
             filter_metadata: 元数据过滤条件
             use_reranker: 是否使用 Reranker（None 表示使用默认设置）
-            rerank_top_k: Rerank 后返回的结果数量（None 表示与 top_k 相同）
+            rerank_top_k: 去重后返回的结果数量（默认5个，None 表示与 top_k 相同）
             rerank_score_threshold: Rerank 分数阈值
             
         Returns:
-            List[Dict]: 搜索结果列表
+            List[Dict]: 去重后的搜索结果列表（最多 rerank_top_k 个不重复文档）
         """
         try:
             if top_k is None:
@@ -254,15 +257,29 @@ class RAGService:
                 reranked_results = self.reranker.rerank(
                     query=query,
                     documents=formatted_results,
-                    top_k=rerank_top_k,
+                    top_k=rerank_top_k * 2,  # 先获取更多结果，去重后再截取
                     score_threshold=rerank_score_threshold
                 )
                 
                 logger.info(f"✓ Rerank 完成，返回 {len(reranked_results)} 条结果")
-                return reranked_results
+                
+                # 5. 去重：过滤分数差异 <= 0.02 的重复文档
+                deduplicated_results = self._deduplicate_results(
+                    results=reranked_results,
+                    score_diff_threshold=0.02,
+                    target_count=rerank_top_k
+                )
+                
+                return deduplicated_results
             
-            # 5. 不使用 Reranker，直接返回向量检索结果
-            return formatted_results[:rerank_top_k]
+            # 6. 不使用 Reranker，直接返回向量检索结果（也需要去重）
+            deduplicated_results = self._deduplicate_results(
+                results=formatted_results,
+                score_diff_threshold=0.02,
+                target_count=rerank_top_k
+            )
+            
+            return deduplicated_results
             
         except Exception as e:
             logger.error(f"✗ 搜索失败: {e}")
@@ -351,13 +368,9 @@ class RAGService:
             return {}
 
 
-# 创建默认 RAG 服务实例
+# 创建默认 RAG 检索服务实例（使用默认模型配置 BGE_LARGE_ZH_V1_5 和 BGE_RERANKER_V2_M3）
 rag_service = RAGService(
     collection_name="rag_documents",
-    embedding_model="bge-large-zh-v1.5",
-    reranker_model="bge-reranker-v2-m3",
-    chunk_size=500,
-    chunk_overlap=50,
     top_k=5,
     use_reranker=True
 )

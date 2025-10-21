@@ -6,6 +6,13 @@ from FlagEmbedding import FlagReranker
 from typing import List, Dict, Any, Optional
 import logging
 
+from pkg.model_list import (
+    get_reranker_model, 
+    list_reranker_models, 
+    ModelManager,
+    BGE_RERANKER_V2_M3  # 默认模型配置
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -15,45 +22,31 @@ class RerankerService:
     _instance: Optional['RerankerService'] = None
     _initialized: bool = False
     
-    # 支持的模型配置
-    MODELS = {
-        "bge-reranker-v2-m3": {
-            "model_name": "BAAI/bge-reranker-v2-m3",
-            "description": "多语言 Reranker，支持中英文",
-            "max_length": 8192
-        },
-        "bge-reranker-large": {
-            "model_name": "BAAI/bge-reranker-large",
-            "description": "大型中文 Reranker",
-            "max_length": 512
-        },
-        "bge-reranker-base": {
-            "model_name": "BAAI/bge-reranker-base",
-            "description": "基础中文 Reranker",
-            "max_length": 512
-        }
-    }
-    
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
     
-    def __init__(self, model_name: str = "bge-reranker-v2-m3", device: str = "cpu"):
+    def __init__(self, model_name: Optional[str] = None, device: str = "cpu"):
         """
         初始化 Reranker 服务
         
         Args:
-            model_name: 模型名称
+            model_name: 模型名称，如果为 None 则使用 BGE_RERANKER_V2_M3
             device: 设备 (cpu/cuda/mps)
         """
         # 只初始化一次
         if RerankerService._initialized:
             return
         
+        # 如果没有指定模型，使用默认配置
+        if model_name is None:
+            model_name = BGE_RERANKER_V2_M3.name
+        
         self.model_name = model_name
         self.device = device
         self.model = None
+        self.model_config = None
         self.max_length = None
         RerankerService._initialized = True
         logger.info(f"Reranker 服务已初始化: {model_name}")
@@ -65,23 +58,16 @@ class RerankerService:
             return
         
         try:
-            if self.model_name not in self.MODELS:
-                raise ValueError(f"不支持的模型: {self.model_name}")
+            # 从统一配置中获取模型配置
+            self.model_config = get_reranker_model(self.model_name)
             
-            model_config = self.MODELS[self.model_name]
-            model_path = model_config["model_name"]
+            logger.info(f"正在加载 Reranker 模型: {self.model_config.model_path}")
+            logger.info(f"描述: {self.model_config.description}")
+            logger.info(f"最大长度: {self.model_config.max_length}")
             
-            logger.info(f"正在加载 Reranker 模型: {model_path}")
-            logger.info(f"描述: {model_config['description']}")
-            logger.info(f"最大长度: {model_config['max_length']}")
-            
-            # 加载模型
-            self.model = FlagReranker(
-                model_path,
-                use_fp16=False,  # CPU 不支持 fp16
-                device=self.device
-            )
-            self.max_length = model_config["max_length"]
+            # 使用统一管理器加载模型
+            self.model = ModelManager.select_reranker_model(self.model_name, self.device)
+            self.max_length = self.model_config.max_length
             
             logger.info(f"✓ Reranker 模型加载成功: {self.model_name}")
             logger.info(f"✓ 使用设备: {self.device}")
@@ -95,7 +81,7 @@ class RerankerService:
         query: str,
         documents: List[Dict[str, Any]],
         top_k: Optional[int] = None,
-        score_threshold: float = 0.0
+        score_threshold: float = -100.0  # BGE reranker 输出 logits，可以是负数
     ) -> List[Dict[str, Any]]:
         """
         对文档进行重排序
@@ -104,7 +90,8 @@ class RerankerService:
             query: 查询文本
             documents: 文档列表，每个文档需包含 'text' 字段
             top_k: 返回前 k 个结果，None 表示返回全部
-            score_threshold: 分数阈值，低于此分数的文档将被过滤
+            score_threshold: 分数阈值（默认 -100.0），低于此分数的文档将被过滤
+                           注意：BGE Reranker 输出的是 logits，通常在 -10 到 10 之间
             
         Returns:
             List[Dict]: 重排序后的文档列表（添加了 rerank_score 字段）
@@ -212,31 +199,27 @@ class RerankerService:
     
     def get_model_info(self) -> dict:
         """获取模型信息"""
-        if self.model_name not in self.MODELS:
-            return {}
-        
-        config = self.MODELS[self.model_name]
-        return {
-            "model_name": self.model_name,
-            "model_path": config["model_name"],
-            "max_length": self.max_length or config["max_length"],
-            "description": config["description"],
-            "device": self.device,
-            "loaded": self.model is not None
-        }
+        try:
+            if self.model_config is None:
+                self.model_config = get_reranker_model(self.model_name)
+            
+            return {
+                "model_name": self.model_name,
+                "model_path": self.model_config.model_path,
+                "max_length": self.max_length or self.model_config.max_length,
+                "description": self.model_config.description,
+                "device": self.device,
+                "loaded": self.model is not None
+            }
+        except Exception as e:
+            return {"error": str(e)}
     
     @classmethod
     def list_available_models(cls) -> List[dict]:
         """列出所有可用模型"""
-        return [
-            {
-                "name": name,
-                **config
-            }
-            for name, config in cls.MODELS.items()
-        ]
+        return [config.to_dict() for config in list_reranker_models()]
 
 
-# 创建全局单例实例
-reranker_service = RerankerService(model_name="bge-reranker-v2-m3")
+# 创建全局单例实例（使用默认模型 BGE_RERANKER_V2_M3）
+reranker_service = RerankerService()
 

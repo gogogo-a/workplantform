@@ -32,6 +32,7 @@ FlagEmbedding==1.2.10
 # 文档处理
 pypdf2==3.0.1
 python-docx==1.1.0
+docx2txt==0.9
 python-multipart==0.0.6
 
 # 工具类

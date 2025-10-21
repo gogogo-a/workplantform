@@ -58,3 +58,14 @@ class MongoDB:
 
 # 全局数据库实例
 db = MongoDB()
+
+
+# 便捷函数（别名）
+async def init_mongodb():
+    """初始化MongoDB连接（便捷函数）"""
+    await db.connect_db()
+
+
+async def close_mongodb():
+    """关闭MongoDB连接（便捷函数）"""
+    await db.close_db()

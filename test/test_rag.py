@@ -12,6 +12,7 @@ sys.path.insert(0, project_root)
 from internal.rag.rag_service import rag_service
 from internal.embedding.embedding_service import embedding_service
 from internal.document.document_processor import document_processor
+from internal.db.milvus import milvus_client
 
 
 def test_embedding_service():
@@ -217,8 +218,15 @@ FastAPI 是一个用于构建 API 的现代、快速（高性能）的 web 框�
         
         print(f"\n添加 {len(test_files)} 个测试文档到 RAG 系统...")
         
-        # 添加文档
-        result = rag_service.add_documents(test_files)
+        # 注入依赖到 document_processor
+        document_processor.embedding_service = embedding_service
+        document_processor.milvus_client = milvus_client
+        
+        # 添加文档（使用 document_processor 处理）
+        result = document_processor.add_documents_to_milvus(
+            file_paths=test_files,
+            collection_name=rag_service.collection_name
+        )
         
         print(f"\n✓ 文档添加完成")
         print(f"  总文档数: {result['total_documents']}")
@@ -421,7 +429,7 @@ def main():
     
     print("\n💡 使用说明:")
     print("1. 准备文档（支持 .txt, .pdf, .docx）")
-    print("2. 使用 rag_service.add_documents([file_paths]) 添加文档")
+    print("2. 使用 document_processor.add_documents_to_milvus(file_paths, collection_name) 添加文档")
     print("3. 使用 rag_service.search(query, use_reranker=True) 检索相关内容")
     print("4. 使用 rag_service.get_context_for_query(query) 获取 LLM 上下文")
     print("\n📊 推荐配置:")

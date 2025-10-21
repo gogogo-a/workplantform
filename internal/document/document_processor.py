@@ -1,6 +1,7 @@
 """
 文档处理服务
-负责文档加载、分割、清理
+负责文档加载、分割、清理、向量化、存储到 MongoDB 和 Milvus
+完整流程：文档 -> MongoDB(获取UUID) -> 分割 -> 向量化 -> Milvus
 """
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class DocumentProcessor:
-    """文档处理器"""
+    """文档处理器 - 负责文档的完整处理流程（MongoDB + Milvus）"""
     
     # 支持的文件类型
     SUPPORTED_EXTENSIONS = {
@@ -33,7 +34,9 @@ class DocumentProcessor:
         self,
         chunk_size: int = 500,
         chunk_overlap: int = 50,
-        separators: Optional[List[str]] = None
+        separators: Optional[List[str]] = None,
+        embedding_service = None,
+        milvus_client = None
     ):
         """
         初始化文档处理器
@@ -42,9 +45,14 @@ class DocumentProcessor:
             chunk_size: 分块大小（字符数）
             chunk_overlap: 分块重叠（字符数）
             separators: 分割符列表
+            embedding_service: Embedding 服务实例
+            milvus_client: Milvus 客户端实例
         """
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.embedding_service = embedding_service
+        self.milvus_client = milvus_client
+        # MongoDB 模型将在需要时导入（避免循环导入）
         
         # 默认分割符（针对中文优化）
         if separators is None:
@@ -275,11 +283,276 @@ class DocumentProcessor:
             "max_chunk_size": max(chunk_sizes),
             "total_characters": sum(chunk_sizes)
         }
+    
+    async def add_documents_to_mongodb(
+        self,
+        file_paths: List[str],
+        url_prefix: str = "",
+        extra_metadata: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        步骤 1: 将文档保存到 MongoDB，获取 UUID
+        
+        Args:
+            file_paths: 文档路径列表
+            url_prefix: 文档 URL 前缀
+            extra_metadata: 额外的元数据
+            
+        Returns:
+            List[Dict]: 文档信息列表，每个包含 uuid、file_path、content 等
+        """
+        from internal.model.document import DocumentModel
+        
+        try:
+            logger.info(f"开始将 {len(file_paths)} 个文档保存到 MongoDB...")
+            
+            documents_info = []
+            
+            for file_path in file_paths:
+                try:
+                    path = Path(file_path)
+                    
+                    # 加载文档内容
+                    loaded_docs = self.load_document(file_path)
+                    
+                    # 合并所有页的内容
+                    full_content = "\n\n".join([doc["content"] for doc in loaded_docs])
+                    
+                    # 创建 MongoDB 文档
+                    doc_model = DocumentModel(
+                        name=path.name,
+                        content=full_content,
+                        page=len(loaded_docs),
+                        url=f"{url_prefix}/{path.name}" if url_prefix else str(path),
+                        size=path.stat().st_size if path.exists() else 0
+                    )
+                    
+                    # 保存到 MongoDB
+                    await doc_model.insert()
+                    
+                    logger.info(f"✓ 文档已保存到 MongoDB: {path.name}, UUID: {doc_model.uuid}")
+                    
+                    # 记录文档信息
+                    doc_info = {
+                        "uuid": doc_model.uuid,
+                        "file_path": file_path,
+                        "name": path.name,
+                        "content": full_content,
+                        "page": len(loaded_docs),
+                        "size": path.stat().st_size if path.exists() else 0,
+                        "extension": path.suffix.lower()
+                    }
+                    
+                    if extra_metadata:
+                        doc_info.update(extra_metadata)
+                    
+                    documents_info.append(doc_info)
+                    
+                except Exception as e:
+                    logger.error(f"✗ 保存文档 {file_path} 到 MongoDB 失败: {e}")
+                    continue
+            
+            logger.info(f"✓ 成功保存 {len(documents_info)} 个文档到 MongoDB")
+            
+            return documents_info
+            
+        except Exception as e:
+            logger.error(f"✗ 批量保存文档到 MongoDB 失败: {e}")
+            raise
+    
+    def add_document_chunks_to_milvus(
+        self,
+        document_info: Dict[str, Any],
+        collection_name: str
+    ) -> Dict[str, Any]:
+        """
+        步骤 2: 分割文档、向量化、存储到 Milvus（带 UUID）
+        
+        Args:
+            document_info: 文档信息（包含 uuid, content 等）
+            collection_name: Milvus 集合名称
+            
+        Returns:
+            Dict: 处理结果统计
+        """
+        if self.embedding_service is None:
+            raise ValueError("Embedding 服务未初始化，请先设置 embedding_service")
+        if self.milvus_client is None:
+            raise ValueError("Milvus 客户端未初始化，请先设置 milvus_client")
+        
+        try:
+            doc_uuid = document_info["uuid"]
+            content = document_info["content"]
+            
+            logger.info(f"开始处理文档 UUID: {doc_uuid}")
+            
+            # 1. 分割文本
+            chunks = self.split_text(
+                text=content,
+                metadata={
+                    "document_uuid": doc_uuid,
+                    "filename": document_info.get("name", "unknown"),
+                    "source": document_info.get("file_path", "unknown")
+                }
+            )
+            
+            if not chunks:
+                logger.warning(f"文档 {doc_uuid} 没有生成文本块")
+                return {"success": False, "message": "没有文本块"}
+            
+            # 2. 提取文本和构建元数据
+            texts = []
+            chunk_metadata = []
+            
+            for idx, chunk in enumerate(chunks):
+                texts.append(chunk["content"])
+                
+                # 构建元数据，包含 document_uuid 和 chunk_id
+                meta = {
+                    "document_uuid": doc_uuid,
+                    "chunk_id": idx,
+                    "chunk_index": chunk["metadata"]["chunk_index"],
+                    "chunk_count": chunk["metadata"]["chunk_count"],
+                    "text": chunk["content"],  # 存储文本
+                    "filename": document_info.get("name", "unknown"),
+                    "source": document_info.get("file_path", "unknown")
+                }
+                chunk_metadata.append(meta)
+            
+            logger.info(f"  文档 {doc_uuid} 分割成 {len(texts)} 个文本块")
+            
+            # 3. 向量化
+            embeddings = self.embedding_service.encode_documents(
+                documents=texts,
+                batch_size=32,
+                normalize=True,
+                show_progress=False
+            )
+            
+            logger.info(f"  文档 {doc_uuid} 向量化完成，共 {len(embeddings)} 个向量")
+            
+            # 4. 存储到 Milvus
+            ids = self.milvus_client.insert_vectors(
+                collection_name=collection_name,
+                embeddings=embeddings.tolist(),
+                texts=texts,
+                metadata=chunk_metadata
+            )
+            
+            logger.info(f"✓ 文档 {doc_uuid} 已存储到 Milvus，共 {len(ids)} 个向量")
+            
+            return {
+                "success": True,
+                "document_uuid": doc_uuid,
+                "total_chunks": len(texts),
+                "total_vectors": len(ids)
+            }
+            
+        except Exception as e:
+            logger.error(f"✗ 处理文档失败: {e}")
+            raise
+    
+    async def add_documents(
+        self,
+        file_paths: List[str],
+        collection_name: str,
+        url_prefix: str = "",
+        extra_metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        完整的文档处理流程：MongoDB -> 分割 -> 向量化 -> Milvus
+        
+        Args:
+            file_paths: 文档路径列表
+            collection_name: Milvus 集合名称
+            url_prefix: 文档 URL 前缀
+            extra_metadata: 额外的元数据
+            
+        Returns:
+            Dict: 处理结果统计
+        """
+        try:
+            logger.info(f"开始完整文档处理流程，共 {len(file_paths)} 个文档...")
+            
+            # 步骤 1: 保存到 MongoDB，获取 UUID
+            documents_info = await self.add_documents_to_mongodb(
+                file_paths=file_paths,
+                url_prefix=url_prefix,
+                extra_metadata=extra_metadata
+            )
+            
+            if not documents_info:
+                return {"success": False, "message": "没有文档被处理"}
+            
+            # 步骤 2: 逐个文档分割、向量化、存储到 Milvus
+            total_chunks = 0
+            total_vectors = 0
+            processed_docs = []
+            
+            for doc_info in documents_info:
+                try:
+                    result = self.add_document_chunks_to_milvus(
+                        document_info=doc_info,
+                        collection_name=collection_name
+                    )
+                    
+                    if result["success"]:
+                        total_chunks += result["total_chunks"]
+                        total_vectors += result["total_vectors"]
+                        processed_docs.append(doc_info["uuid"])
+                        
+                except Exception as e:
+                    logger.error(f"✗ 处理文档 {doc_info['uuid']} 失败: {e}")
+                    continue
+            
+            # 统计信息
+            stats = {
+                "success": True,
+                "total_documents": len(file_paths),
+                "processed_documents": len(processed_docs),
+                "document_uuids": processed_docs,
+                "total_chunks": total_chunks,
+                "total_vectors": total_vectors,
+                "dimension": self.embedding_service.dimension,
+                "collection": collection_name
+            }
+            
+            logger.info(f"✓ 完整流程完成")
+            logger.info(f"  总文档数: {stats['total_documents']}")
+            logger.info(f"  处理成功: {stats['processed_documents']}")
+            logger.info(f"  总文本块数: {stats['total_chunks']}")
+            logger.info(f"  总向量数: {stats['total_vectors']}")
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"✗ 完整文档处理流程失败: {e}")
+            raise
 
 
-# 创建默认实例
+# 注意：不在这里导入 embedding_service 和 milvus_client 避免循环导入
+# 使用时需要手动注入依赖：
+# document_processor.embedding_service = embedding_service
+# document_processor.milvus_client = milvus_client
+#
+# 使用方式：
+# 1. 完整流程：await document_processor.add_documents(file_paths, collection_name)
+#    - 文档 -> MongoDB(获取UUID) -> 分割 -> 向量化 -> Milvus
+#
+# 2. 分步骤：
+#    - 步骤 1: documents_info = await document_processor.add_documents_to_mongodb(file_paths)
+#    - 步骤 2: document_processor.add_document_chunks_to_milvus(doc_info, collection_name)
+#
+# Milvus 存储结构：
+# - document_uuid: 文档在 MongoDB 中的 UUID
+# - chunk_id: 分割后的小段 ID (0, 1, 2, ...)
+# - text: 文本内容
+# - vector: 向量
+# - metadata: filename, source, chunk_index, chunk_count 等
+
+# 创建默认实例（依赖需要在使用前注入）
 document_processor = DocumentProcessor(
     chunk_size=500,    # 500字符一块
-    chunk_overlap=50   # 50字符重叠
+    chunk_overlap=50,  # 50字符重叠
 )
 

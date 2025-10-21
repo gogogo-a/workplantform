@@ -6,7 +6,7 @@ LLM 服务层
 """
 from typing import Optional, List, Dict, Any, Callable
 import asyncio
-from pkg.model_list.model_list import select_model
+from pkg.model_list import ModelManager, LLAMA_3_2  # 默认模型配置
 from pkg.agent_prompt.prompt_templates import get_prompt, SUMMARY_PROMPT
 from pkg.agent_prompt.agent_tool import (
     get_tools_info,
@@ -20,8 +20,8 @@ class LLMService:
     
     def __init__(
         self,
-        model_name: str = "llama3.2",
-        model_type: str = "local",
+        model_name: Optional[str] = None,
+        model_type: Optional[str] = None,
         system_prompt: Optional[str] = None,
         tools: Optional[List[Callable]] = None,
         auto_summary: bool = True,
@@ -32,8 +32,8 @@ class LLMService:
         初始化 LLM 服务
         
         Args:
-            model_name: 模型名称
-            model_type: 模型类型 (local/cloud)
+            model_name: 模型名称，如果为 None 则使用 LLAMA_3_2
+            model_type: 模型类型 (local/cloud)，如果为 None 则使用默认模型的类型
             system_prompt: 自定义系统提示词（可选）
             tools: 使用的工具函数列表（可选），可以直接点击跳转
                    例如: [knowledge_search, document_analyzer]
@@ -41,6 +41,16 @@ class LLMService:
             max_history_count: 历史记录最大条数（默认10条）
             max_history_tokens: 历史记录最大token数（默认从配置读取）
         """
+        # 如果没有指定模型，使用默认配置
+        if model_name is None:
+            model_name = LLAMA_3_2.name
+            model_type = LLAMA_3_2.model_type
+        elif model_type is None:
+            # 如果只指定了 model_name，从配置中获取 model_type
+            from pkg.model_list import get_llm_model
+            config = get_llm_model(model_name)
+            model_type = config.model_type
+        
         self.model_name = model_name
         self.model_type = model_type
         
@@ -71,8 +81,8 @@ class LLMService:
     def _initialize(self):
         """初始化模型"""
         try:
-            self.llm = select_model(self.model_name, self.model_type)
-            print(f"✓ 模型已加载: {self.model_name}")
+            self.llm = ModelManager.select_llm_model(self.model_name, self.model_type)
+            print(f"✓ 模型已加载: {self.model_name} (type: {self.model_type})")
             if self.tools:
                 tool_names = [t.__name__ for t in self.tools]
                 print(f"✓ 已启用工具: {tool_names}")
