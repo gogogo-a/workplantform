@@ -2,6 +2,9 @@
 Re-ranker 服务
 用于对检索结果进行二次排序，提高相关性
 """
+# 🔥 关键：必须先导入 constants，设置 HuggingFace 离线模式
+from pkg.constants.constants import RUNNING_MODE
+
 from FlagEmbedding import FlagReranker
 from typing import List, Dict, Any, Optional
 import logging
@@ -12,7 +15,6 @@ from pkg.model_list import (
     ModelManager,
     BGE_RERANKER_V2_M3  # 默认模型配置
 )
-from pkg.constants.constants import RUNNING_MODE
 
 logger = logging.getLogger(__name__)
 

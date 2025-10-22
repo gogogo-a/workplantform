@@ -13,6 +13,7 @@ class MessageModel(Document):
     """消息模型类 - 使用 Beanie ODM"""
     
     uuid: str = Field(..., description="消息uuid")
+    session_id: str = Field(..., description="会话ID")
     content: str = Field(..., description="消息内容")
     send_id: str = Field(..., description="发送者uuid")
     send_name: str = Field(..., description="发送者昵称")

@@ -5,6 +5,10 @@
 from typing import Any, Union, Optional
 import logging
 
+# 🔥 关键：必须在导入其他库之前先导入 constants
+# 以便设置 HuggingFace 离线模式等环境变量
+from pkg.constants.constants import OLLAMA_BASE_URL, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, RUNNING_MODE
+
 from .llm_model_list import (
     LLM_MODELS, 
     LLAMA_3_2, 
@@ -27,8 +31,6 @@ from .reranker_model_list import (
     list_reranker_models
 )
 from .base_model import LLMModelConfig, EmbeddingModelConfig, RerankerModelConfig
-
-from pkg.constants.constants import OLLAMA_BASE_URL, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, RUNNING_MODE
 
 logger = logging.getLogger(__name__)
 

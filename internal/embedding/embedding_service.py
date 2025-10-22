@@ -2,6 +2,9 @@
 Embedding 服务
 使用 bge-large-zh-v1.5 模型进行文本向量化
 """
+# 🔥 关键：必须先导入 constants，设置 HuggingFace 离线模式
+from pkg.constants.constants import RUNNING_MODE
+
 from sentence_transformers import SentenceTransformer
 from typing import List, Union, Optional
 import numpy as np
@@ -13,7 +16,6 @@ from pkg.model_list import (
     ModelManager,
     BGE_LARGE_ZH_V1_5  # 默认模型配置
 )
-from pkg.constants.constants import RUNNING_MODE
 
 logger = logging.getLogger(__name__)
 

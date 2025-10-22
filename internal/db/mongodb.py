@@ -18,6 +18,7 @@ class MongoDB:
         from internal.model.document import DocumentModel
         from internal.model.message import MessageModel
         from internal.model.user_info import UserInfoModel
+        from internal.model.session import SessionModel
         
         # MongoDB 连接 URL
         url = MONGODB_URL
@@ -37,12 +38,13 @@ class MongoDB:
                 document_models=[
                     DocumentModel,
                     MessageModel,
-                    UserInfoModel
+                    UserInfoModel,
+                    SessionModel
                 ]
             )
             print(f"✓ Beanie ODM 初始化成功！")
             print(f"✓ 数据库: {database_name}")
-            print(f"✓ 集合: documents, messages, users")
+            print(f"✓ 集合: documents, message, user_info, session")
             
         except Exception as e:
             print(f"✗ MongoDB 连接失败: {e}")

@@ -13,6 +13,12 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 # 注意：Ollama 模型的设备由 Ollama 服务端控制，此配置不影响 Ollama
 RUNNING_MODE=cpu
 
+# HuggingFace 模型配置
+# 如果模型已下载到本地，设置为 1 可避免联网检查
+# 如果需要从 HuggingFace 下载，可以使用镜像：HF_ENDPOINT=https://hf-mirror.com
+TRANSFORMERS_OFFLINE=1
+HF_HUB_OFFLINE=1
+
 # ==================== 数据库配置 ====================
 
 # MongoDB 配置
@@ -25,6 +31,12 @@ MILVUS_PORT=19530
 MILVUS_USER=root
 MILVUS_PASSWORD=rootpassword
 MILVUS_DB_NAME=rag_platform
+
+# Redis 缓存配置
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_DB=0
+REDIS_PASSWORD=
 
 # ==================== 其他配置 ====================
 

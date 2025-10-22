@@ -91,7 +91,8 @@ class Milvus:
         description: str = "",
         index_type: str = "IVF_FLAT",
         metric_type: str = "L2",
-        auto_id: bool = True
+        auto_id: bool = True,
+        index_params: Optional[Dict[str, Any]] = None
     ) -> Collection:
         """
         创建集合（Collection）
@@ -137,15 +138,28 @@ class Milvus:
             )
             
             # 创建索引
-            index_params = {
+            if index_params is None:
+                # 默认参数（根据索引类型选择）
+                if index_type == "IVF_FLAT" or index_type == "IVF_SQ8":
+                    params = {"nlist": 1024}
+                elif index_type == "HNSW":
+                    params = {"M": 16, "efConstruction": 256}
+                elif index_type == "IVF_PQ":
+                    params = {"nlist": 1024, "m": 8, "nbits": 8}
+                else:
+                    params = {"nlist": 1024}
+            else:
+                params = index_params
+            
+            final_index_params = {
                 "metric_type": metric_type,
                 "index_type": index_type,
-                "params": {"nlist": 1024}
+                "params": params
             }
             
             collection.create_index(
                 field_name="embedding",
-                index_params=index_params
+                index_params=final_index_params
             )
             
             logger.info(f"✓ 集合 '{collection_name}' 创建成功")
@@ -361,6 +375,133 @@ class Milvus:
         except Exception as e:
             logger.error(f"✗ 获取集合统计信息失败: {e}")
             return {}
+    
+    # ==================== 分区管理（Partition）====================
+    
+    def create_partition(self, collection_name: str, partition_name: str) -> bool:
+        """
+        创建分区（用于数据分组，提升大规模数据检索性能）
+        
+        Args:
+            collection_name: 集合名称
+            partition_name: 分区名称（如 "2024_01", "通知类"）
+            
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            collection = self.get_collection(collection_name)
+            if collection is None:
+                logger.error(f"✗ 集合 '{collection_name}' 不存在")
+                return False
+            
+            collection.create_partition(partition_name)
+            logger.info(f"✓ 分区 '{partition_name}' 创建成功")
+            return True
+            
+        except Exception as e:
+            logger.error(f"✗ 创建分区失败: {e}")
+            return False
+    
+    def list_partitions(self, collection_name: str) -> List[str]:
+        """
+        列出所有分区
+        
+        Args:
+            collection_name: 集合名称
+            
+        Returns:
+            List[str]: 分区名称列表
+        """
+        try:
+            collection = self.get_collection(collection_name)
+            if collection is None:
+                return []
+            
+            partitions = [p.name for p in collection.partitions]
+            logger.info(f"✓ 集合 '{collection_name}' 的分区: {partitions}")
+            return partitions
+            
+        except Exception as e:
+            logger.error(f"✗ 获取分区列表失败: {e}")
+            return []
+    
+    def search_in_partitions(
+        self,
+        collection_name: str,
+        query_embeddings: List[List[float]],
+        partition_names: List[str],
+        top_k: int = 10,
+        metric_type: str = "COSINE",
+        output_fields: Optional[List[str]] = None
+    ) -> List[List[Dict[str, Any]]]:
+        """
+        在指定分区中搜索（只搜索部分分区，大幅减少搜索范围和内存占用）
+        
+        示例：只搜索 "2024_01" 和 "2024_02" 月份的数据
+        
+        Args:
+            collection_name: 集合名称
+            query_embeddings: 查询向量列表
+            partition_names: 要搜索的分区名称列表（只搜索这些分区）
+            top_k: 返回 top K 个结果
+            metric_type: 度量类型
+            output_fields: 需要返回的字段
+            
+        Returns:
+            List[List[Dict]]: 搜索结果
+        """
+        try:
+            collection = self.get_collection(collection_name)
+            if collection is None:
+                logger.error(f"✗ 集合 '{collection_name}' 不存在")
+                return []
+            
+            # 加载集合到内存
+            collection.load()
+            
+            # 设置搜索参数
+            search_params = {
+                "metric_type": metric_type,
+                "params": {"nprobe": 10}
+            }
+            
+            if output_fields is None:
+                output_fields = ["text", "metadata"]
+            
+            # 在指定分区中搜索（关键：只搜索 partition_names 分区）
+            results = collection.search(
+                data=query_embeddings,
+                anns_field="embedding",
+                param=search_params,
+                limit=top_k,
+                partition_names=partition_names,  # 只搜索这些分区！
+                output_fields=output_fields
+            )
+            
+            # 格式化结果
+            formatted_results = []
+            for hits in results:
+                query_results = []
+                for hit in hits:
+                    result = {
+                        "id": hit.id,
+                        "distance": hit.distance,
+                        "score": hit.score if hasattr(hit, 'score') else hit.distance,
+                    }
+                    # 添加输出字段
+                    for field in output_fields:
+                        if hasattr(hit.entity, field):
+                            result[field] = getattr(hit.entity, field)
+                    query_results.append(result)
+                formatted_results.append(query_results)
+            
+            logger.info(f"✓ 在分区 {partition_names} 中搜索完成（只搜索了 {len(partition_names)} 个分区）")
+            return formatted_results
+            
+        except Exception as e:
+            logger.error(f"✗ 搜索失败: {e}")
+            return []
 
 
 # 创建全局单例实例

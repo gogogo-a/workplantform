@@ -5,10 +5,12 @@
 from internal.model.document import DocumentModel
 from internal.model.message import MessageModel
 from internal.model.user_info import UserInfoModel
+from internal.model.session import SessionModel
 
 __all__ = [
     "DocumentModel",
     "MessageModel",
-    "UserInfoModel"
+    "UserInfoModel",
+    "SessionModel"
 ]
 
