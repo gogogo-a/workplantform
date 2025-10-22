@@ -28,7 +28,7 @@ from .reranker_model_list import (
 )
 from .base_model import LLMModelConfig, EmbeddingModelConfig, RerankerModelConfig
 
-from pkg.constants.constants import OLLAMA_BASE_URL, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
+from pkg.constants.constants import OLLAMA_BASE_URL, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, RUNNING_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,10 @@ class ModelManager:
     def select_llm_model(model_name: str, model_type: Optional[str] = None) -> Any:
         """
         选择并初始化 LLM 模型
+        
+        注意：
+        - Ollama 本地模型的 GPU/CPU 使用由 Ollama 服务端自动决定，不由客户端代码控制
+        - Embedding 和 Reranker 模型的设备通过 RUNNING_MODE 环境变量配置
         
         Args:
             model_name: 模型名称 (如 "llama3.2", "deepseek-chat")
@@ -95,17 +99,21 @@ class ModelManager:
             )
     
     @staticmethod
-    def select_embedding_model(model_name: str, device: str = "cpu") -> 'SentenceTransformer':
+    def select_embedding_model(model_name: str, device: Optional[str] = None) -> 'SentenceTransformer':
         """
         选择并初始化 Embedding 模型
         
         Args:
             model_name: 模型名称 (如 "bge-large-zh-v1.5")
-            device: 设备 (cpu/cuda/mps)
+            device: 设备 (cpu/cuda/mps)，如果为 None 则使用环境变量 RUNNING_MODE
             
         Returns:
             SentenceTransformer 实例
         """
+        # 如果没有指定设备，使用环境变量
+        if device is None:
+            device = RUNNING_MODE
+        
         # 获取模型配置
         config = get_embedding_model(model_name)
         
@@ -118,23 +126,27 @@ class ModelManager:
         )
         
         logger.info(f"✓ 已加载 Embedding 模型: {model_name}")
-        logger.info(f"  维度: {config.dimension}, 最大长度: {config.max_length}")
-        print(f"✓ 已加载 Embedding 模型: {model_name}")
+        logger.info(f"  维度: {config.dimension}, 最大长度: {config.max_length}, 设备: {device}")
+        print(f"✓ 已加载 Embedding 模型: {model_name} (设备: {device})")
         
         return model
     
     @staticmethod
-    def select_reranker_model(model_name: str, device: str = "cpu") -> 'FlagReranker':
+    def select_reranker_model(model_name: str, device: Optional[str] = None) -> 'FlagReranker':
         """
         选择并初始化 Reranker 模型
         
         Args:
             model_name: 模型名称 (如 "bge-reranker-v2-m3")
-            device: 设备 (cpu/cuda/mps)
+            device: 设备 (cpu/cuda/mps)，如果为 None 则使用环境变量 RUNNING_MODE
             
         Returns:
             FlagReranker 实例
         """
+        # 如果没有指定设备，使用环境变量
+        if device is None:
+            device = RUNNING_MODE
+        
         # 获取模型配置
         config = get_reranker_model(model_name)
         
@@ -148,8 +160,8 @@ class ModelManager:
         )
         
         logger.info(f"✓ 已加载 Reranker 模型: {model_name}")
-        logger.info(f"  最大长度: {config.max_length}")
-        print(f"✓ 已加载 Reranker 模型: {model_name}")
+        logger.info(f"  最大长度: {config.max_length}, 设备: {device}")
+        print(f"✓ 已加载 Reranker 模型: {model_name} (设备: {device})")
         
         return model
     

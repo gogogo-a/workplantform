@@ -27,3 +27,6 @@ MILVUS_PORT = int(os.getenv("MILVUS_PORT", "19530"))
 MILVUS_USER = os.getenv("MILVUS_USER", "root")
 MILVUS_PASSWORD = os.getenv("MILVUS_PASSWORD", "rootpassword")
 MILVUS_DB_NAME = os.getenv("MILVUS_DB_NAME", "rag_platform")
+
+#运行模式
+RUNNING_MODE = os.getenv("RUNNING_MODE", "cpu")

@@ -37,71 +37,80 @@ class AgentTool:
 
 # ==================== 工具函数定义 ====================
 
-def knowledge_search(query: str, top_k: int = 5) -> List[Dict]:
+def knowledge_search(query: str, top_k: int = 5, use_reranker: bool = True) -> Dict[str, Any]:
     """
     知识库搜索工具
-    从向量数据库中检索相关知识
+    从向量数据库中检索相关知识（RAG）
     
     Args:
         query: 搜索查询
         top_k: 返回结果数量
+        use_reranker: 是否使用重排序
+        
+    Returns:
+        Dict: 包含搜索结果和上下文的字典
+            - success: 是否成功
+            - results: 搜索结果列表
+            - context: 格式化的上下文文本
+            - count: 结果数量
     """
-    # TODO: 实际实现时连接 Milvus 进行向量搜索
-    print(f"[工具] 知识库搜索: {query} (Top {top_k})")
-    return [
-        {
-            "content": f"知识片段关于: {query}",
-            "source": "示例文档",
-            "score": 0.95
+    try:
+        # 延迟导入，避免循环依赖
+        from internal.rag.rag_service import rag_service
+        
+        print(f"[工具] 知识库搜索: {query} (Top {top_k})")
+        
+        # 执行 RAG 检索
+        search_results = rag_service.search(
+            query=query,
+            top_k=top_k,
+            use_reranker=use_reranker
+        )
+        
+        if not search_results:
+            print(f"[工具] 未找到相关文档")
+            return {
+                "success": False,
+                "results": [],
+                "context": "",
+                "count": 0,
+                "message": "知识库中未找到相关信息"
+            }
+        
+        # 构建上下文（增加长度限制，确保返回完整内容）
+        context = rag_service.get_context_for_query(
+            query=query,
+            top_k=top_k,
+            max_context_length=10000,  # 增加到 10000 字符，确保完整内容
+            use_reranker=use_reranker
+        )
+        
+        print(f"[工具] 找到 {len(search_results)} 个相关文档片段")
+        print(f"[工具] 上下文长度: {len(context)} 字符")
+        
+        return {
+            "success": True,
+            "results": search_results,
+            "context": context,
+            "count": len(search_results),
+            "message": f"成功检索到 {len(search_results)} 个相关文档片段"
         }
-    ]
+        
+    except Exception as e:
+        print(f"[工具] 知识库搜索失败: {e}")
+        return {
+            "success": False,
+            "results": [],
+            "context": "",
+            "count": 0,
+            "message": f"搜索失败: {str(e)}"
+        }
 
 # 提示词模板
 knowledge_search.prompt_template = "rag"
-knowledge_search.description = "从知识库检索相关信息"
+knowledge_search.description = "从知识库检索相关信息（RAG检索），用于回答需要参考文档的问题"
 
 
-def document_analyzer(doc_path: str) -> Dict:
-    """
-    文档分析工具
-    分析文档内容并提取关键信息
-    
-    Args:
-        doc_path: 文档路径
-    """
-    # TODO: 实际实现时处理文档
-    print(f"[工具] 文档分析: {doc_path}")
-    return {
-        "summary": "文档摘要",
-        "keywords": ["关键词1", "关键词2"],
-        "sections": 3
-    }
-
-# 提示词模板
-document_analyzer.prompt_template = "document"
-document_analyzer.description = "分析文档内容"
-
-
-def code_executor(code: str, language: str = "python") -> Dict:
-    """
-    代码执行工具
-    执行代码并返回结果
-    
-    Args:
-        code: 代码内容
-        language: 编程语言
-    """
-    # TODO: 实际实现时在沙箱环境执行代码
-    print(f"[工具] 代码执行: {language}")
-    return {
-        "status": "success",
-        "output": "执行结果",
-        "error": None
-    }
-
-# 提示词模板
-code_executor.prompt_template = "code"
-code_executor.description = "执行代码片段"
 
 
 # ==================== 工具助手函数 ====================
@@ -158,8 +167,6 @@ def get_prompt_for_tools(tools: List[Callable]) -> str:
 
 ALL_TOOLS = [
     knowledge_search,
-    document_analyzer,
-    code_executor
 ]
 
 

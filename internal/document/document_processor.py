@@ -176,41 +176,7 @@ class DocumentProcessor:
             logger.error(f"✗ 文本分割失败: {e}")
             raise
     
-    def process_document(
-        self,
-        file_path: str
-    ) -> List[Dict[str, Any]]:
-        """
-        处理文档：加载 + 分割
-        
-        Args:
-            file_path: 文档路径
-            
-        Returns:
-            List[Dict]: 处理后的文本块列表
-        """
-        try:
-            # 加载文档
-            documents = self.load_document(file_path)
-            
-            # 分割每个文档
-            all_chunks = []
-            for doc in documents:
-                chunks = self.split_text(
-                    text=doc["content"],
-                    metadata=doc["metadata"]
-                )
-                all_chunks.extend(chunks)
-            
-            logger.info(f"✓ 文档处理完成")
-            logger.info(f"  总块数: {len(all_chunks)}")
-            
-            return all_chunks
-            
-        except Exception as e:
-            logger.error(f"✗ 文档处理失败: {e}")
-            raise
-    
+   
     def clean_text(self, text: str) -> str:
         """
         清理文本
@@ -232,58 +198,7 @@ class DocumentProcessor:
         
         return text
     
-    def batch_process_documents(
-        self,
-        file_paths: List[str]
-    ) -> List[Dict[str, Any]]:
-        """
-        批量处理文档
-        
-        Args:
-            file_paths: 文档路径列表
-            
-        Returns:
-            List[Dict]: 所有文档的文本块列表
-        """
-        all_chunks = []
-        
-        for file_path in file_paths:
-            try:
-                chunks = self.process_document(file_path)
-                all_chunks.extend(chunks)
-            except Exception as e:
-                logger.error(f"处理文档 {file_path} 失败: {e}")
-                continue
-        
-        logger.info(f"✓ 批量处理完成")
-        logger.info(f"  总文档数: {len(file_paths)}")
-        logger.info(f"  总块数: {len(all_chunks)}")
-        
-        return all_chunks
-    
-    def get_stats(self, chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        获取文档块统计信息
-        
-        Args:
-            chunks: 文本块列表
-            
-        Returns:
-            Dict: 统计信息
-        """
-        if not chunks:
-            return {}
-        
-        chunk_sizes = [len(chunk["content"]) for chunk in chunks]
-        
-        return {
-            "total_chunks": len(chunks),
-            "avg_chunk_size": sum(chunk_sizes) / len(chunk_sizes),
-            "min_chunk_size": min(chunk_sizes),
-            "max_chunk_size": max(chunk_sizes),
-            "total_characters": sum(chunk_sizes)
-        }
-    
+
     async def add_documents_to_mongodb(
         self,
         file_paths: List[str],

@@ -12,6 +12,7 @@ from pkg.model_list import (
     ModelManager,
     BGE_RERANKER_V2_M3  # 默认模型配置
 )
+from pkg.constants.constants import RUNNING_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +28,13 @@ class RerankerService:
             cls._instance = super().__new__(cls)
         return cls._instance
     
-    def __init__(self, model_name: Optional[str] = None, device: str = "cpu"):
+    def __init__(self, model_name: Optional[str] = None, device: Optional[str] = None):
         """
         初始化 Reranker 服务
         
         Args:
             model_name: 模型名称，如果为 None 则使用 BGE_RERANKER_V2_M3
-            device: 设备 (cpu/cuda/mps)
+            device: 设备 (cpu/cuda/mps)，如果为 None 则使用环境变量 RUNNING_MODE
         """
         # 只初始化一次
         if RerankerService._initialized:
@@ -43,13 +44,17 @@ class RerankerService:
         if model_name is None:
             model_name = BGE_RERANKER_V2_M3.name
         
+        # 如果没有指定设备，使用环境变量
+        if device is None:
+            device = RUNNING_MODE
+        
         self.model_name = model_name
         self.device = device
         self.model = None
         self.model_config = None
         self.max_length = None
         RerankerService._initialized = True
-        logger.info(f"Reranker 服务已初始化: {model_name}")
+        logger.info(f"Reranker 服务已初始化: {model_name}, 设备: {device}")
     
     def load_model(self):
         """加载模型"""

@@ -13,6 +13,7 @@ from pkg.model_list import (
     ModelManager,
     BGE_LARGE_ZH_V1_5  # 默认模型配置
 )
+from pkg.constants.constants import RUNNING_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +29,13 @@ class EmbeddingService:
             cls._instance = super().__new__(cls)
         return cls._instance
     
-    def __init__(self, model_name: Optional[str] = None, device: str = "cpu"):
+    def __init__(self, model_name: Optional[str] = None, device: Optional[str] = None):
         """
         初始化 Embedding 服务
         
         Args:
             model_name: 模型名称，如果为 None 则使用 BGE_LARGE_ZH_V1_5
-            device: 设备 (cpu/cuda/mps)
+            device: 设备 (cpu/cuda/mps)，如果为 None 则使用环境变量 RUNNING_MODE
         """
         # 只初始化一次
         if EmbeddingService._initialized:
@@ -43,6 +44,10 @@ class EmbeddingService:
         # 如果没有指定模型，使用默认配置
         if model_name is None:
             model_name = BGE_LARGE_ZH_V1_5.name
+        
+        # 如果没有指定设备，使用环境变量
+        if device is None:
+            device = RUNNING_MODE
             
         self.model_name = model_name
         self.device = device
@@ -51,7 +56,7 @@ class EmbeddingService:
         self.dimension = None
         self.max_length = None
         EmbeddingService._initialized = True
-        logger.info(f"Embedding 服务已初始化: {model_name}")
+        logger.info(f"Embedding 服务已初始化: {model_name}, 设备: {device}")
     
     def load_model(self):
         """加载模型"""

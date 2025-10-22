@@ -1,5 +1,6 @@
-# AI 模型配置
-# Ollama 本地模型
+# ==================== AI 模型配置 ====================
+
+# Ollama 本地模型（GPU/CPU 使用由 Ollama 服务端自动决定）
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_DEFAULT_MODEL=llama3.2
 
@@ -7,16 +8,26 @@ OLLAMA_DEFAULT_MODEL=llama3.2
 DEEPSEEK_API_KEY=your_deepseek_api_key_here
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 
+# 运行模式：控制 Embedding 和 Reranker 模型的设备
+# 可选值: cpu, cuda, mps (macOS GPU)
+# 注意：Ollama 模型的设备由 Ollama 服务端控制，此配置不影响 Ollama
+RUNNING_MODE=cpu
+
+# ==================== 数据库配置 ====================
+
 # MongoDB 配置
 MONGODB_URL=mongodb://root:rootpassword@localhost:27017/
-MONGODB_DATABASE=plantform_db
+MONGODB_DATABASE=rag_platform
 
 # Milvus 向量数据库配置
 MILVUS_HOST=localhost
 MILVUS_PORT=19530
 MILVUS_USER=root
 MILVUS_PASSWORD=rootpassword
+MILVUS_DB_NAME=rag_platform
 
-# Token 限制配置
+# ==================== 其他配置 ====================
+
+# Token 限制配置（用于聊天历史总结）
 MAX_TOKEN_LIMIT_FOR_SUMMARY=6400
 
