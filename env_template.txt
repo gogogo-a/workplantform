@@ -38,6 +38,26 @@ REDIS_PORT=6379
 REDIS_DB=0
 REDIS_PASSWORD=
 
+# ==================== 邮件服务配置 ====================
+
+# SMTP 邮件服务器配置（用于发送验证码）
+EMAIL_HOST=smtp.qq.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=True
+EMAIL_HOST_USER=your_email@qq.com
+EMAIL_HOST_PASSWORD=your_smtp_authorization_code
+EMAIL_FROM=your_email@qq.com
+EMAIL_TIMEOUT=10
+
+# SSL 证书验证（开发环境可设为 False，生产环境建议设为 True）
+# 如果遇到 "certificate verify failed" 错误，可以将此项设为 False
+EMAIL_VERIFY_SSL=False
+
+# ==================== 安全配置 ====================
+
+# JWT 密钥（请使用强密码，建议 32 字符以上）
+SECRET_KEY=your_secret_key_change_this_in_production_min_32_chars
+
 # ==================== 其他配置 ====================
 
 # Token 限制配置（用于聊天历史总结）

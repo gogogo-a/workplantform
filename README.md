@@ -49,47 +49,115 @@
 #### 2.1 LLM 服务（`internal/llm/llm_service.py`）
 - ✅ **模型调用**
   - 统一的 LLM 接口，支持本地和云端模型切换
-  - 流式对话（`stream_chat`）
-  - 非流式对话（`chat`）
+  - 简化 API：支持 `user_message`（推荐）和 `messages`（高级用法）
+  - 自动历史记录管理（`use_history=True`）
+  - 流式和非流式对话支持
   
 - ✅ **高级功能**
   - 系统 Prompt 管理
   - 工具调用能力（Tool Use）
-  - 自动聊天历史总结
+  - 延迟总结机制：在下次对话前自动执行总结
     - 触发条件：消息数 >= 10 或 token 数超过阈值
-    - 全异步执行
+    - 同步执行（`summarize_history()`）
     - 自动替换历史记录
+  - 参数验证：禁止同时传递 `user_message` 和 `messages`
 
-#### 2.2 Prompt 管理（`pkg/agent_prompt/`）
+#### 2.2 ChatService 会话服务（`internal/chat_service/chat_service.py`）🆕
+- ✅ **统一会话管理**
+  - Session 和 User 管理
+  - Redis 历史记录持久化（可配置过期时间）
+  - 自动历史记录管理
+  - 自动 Redis 同步
+  
+- ✅ **Agent 集成**
+  - 统一的 `chat()` 方法，支持普通对话和 Agent 对话
+  - 通过 `use_agent=True` 启用 ReAct Agent
+  - 自动创建 ReAct Agent
+  - 可控历史粒度（`save_only_answer`）
+    - `True`: 只保存问答（推荐，简洁）
+    - `False`: 保存完整思考过程（调试用）
+  - 自动清理中间推理步骤
+  
+- ✅ **简化 API**
+  ```python
+  # ✅ 普通对话
+  for chunk in chat_service.chat("你好"):
+      print(chunk, end="")
+  
+  # ✅ Agent 对话（1 行，全自动）
+  answer = chat_service.chat(
+      user_message="你的问题",
+      use_agent=True,
+      agent_tools={"knowledge_search": knowledge_search},
+      save_only_answer=True  # 只保存问答
+  )
+  ```
+
+#### 2.3 ReAct Agent（`internal/agent/react_agent.py`）🆕
+- ✅ **真正的 ReAct 框架**
+  - Thought → Action → Observation 循环
+  - 真实工具调用（非伪造）
+  - 防止循环和重复 Action
+  - 强制使用 Observation 内容（禁止编造）
+  
+- ✅ **智能控制**
+  - 自动检测 LLM 生成 Observation 并截断
+  - 检测重复 Action 并强制给出 Answer
+  - 最多 5 轮推理（可配置）
+  - 详细的调试输出
+
+#### 2.4 Redis 缓存服务（`internal/db/redis.py`）🆕
+- ✅ **单例连接管理**
+  - 自动连接和重连
+  - 连接池支持
+  
+- ✅ **完整的 CRUD 操作**
+  - 基础操作：`get`, `set`, `delete`, `exists`
+  - 过期管理：`expire`, `ttl`
+  - Hash 操作：`hset`, `hget`, `hgetall`
+  - List 操作：`lpush`, `rpush`, `lpop`, `rpop`, `lrange`
+  - Set 操作：`sadd`, `srem`, `smembers`, `scard`
+  - Sorted Set 操作：`zadd`, `zrange`, `zrem`
+  - Pub/Sub：`publish`, `subscribe`
+
+#### 2.5 Session 模型（`internal/model/session.py`）🆕
+- ✅ **会话管理**
+  - `SessionModel`: 会话模型（uuid, user_id, create_at, update_at）
+  - `MessageModel`: 新增 `session_id` 字段，关联会话
+  - 支持多会话管理
+
+#### 2.6 Prompt 管理（`pkg/agent_prompt/`）
 - ✅ **多场景 Prompt 模板**
   - `DEFAULT_PROMPT`: 通用对话
   - `RAG_PROMPT`: 基于知识库的问答
+  - `AGENT_RAG_PROMPT`: ReAct Agent 专用 Prompt 🆕
   - `CODE_PROMPT`: 代码生成与解释
   - `DOCUMENT_PROMPT`: 文档分析
   - `SUMMARY_PROMPT`: 聊天历史总结
   
 - ✅ **工具定义**（`agent_tool.py`）
-  - `knowledge_search`: 知识库搜索
-  - `document_analyzer`: 文档分析
-  - `code_executor`: 代码执行
+  - `knowledge_search`: 知识库搜索（已实现）
   - IDE 可点击跳转
 
-#### 2.3 Embedding 服务（`internal/embedding/embedding_service.py`）
+#### 2.7 Embedding 服务（`internal/embedding/embedding_service.py`）
 - ✅ **文本向量化**
   - 基于 `sentence-transformers` 
   - 支持文档批量编码（`encode_documents`）
   - 支持查询编码（`encode_query`，带归一化）
   - 单例模式，避免重复加载
-  - 支持 CPU/GPU 切换
+  - 智能设备选择（CPU/CUDA/MPS）
+  - HuggingFace 离线模式支持 🆕
 
-#### 2.4 Reranker 服务（`internal/reranker/reranker_service.py`）
+#### 2.8 Reranker 服务（`internal/reranker/reranker_service.py`）
 - ✅ **检索结果重排序**
   - 基于 `FlagEmbedding` 的 BGE Reranker
   - 语义相关性二次评分
-  - 支持自定义分数阈值
+  - 支持自定义分数阈值（默认 -100.0）
   - Logits 输出（-100 到 +10，分数越高越相关）
+  - 智能设备选择（CPU/CUDA/MPS）
+  - HuggingFace 离线模式支持 🆕
 
-#### 2.5 文档处理服务（`internal/document/document_processor.py`）
+#### 2.9 文档处理服务（`internal/document/document_processor.py`）
 - ✅ **多格式文档支持**
   - `.txt`、`.pdf`、`.docx` 格式
   - 基于 LangChain 的文档加载器
@@ -99,8 +167,9 @@
   - `add_document_chunks_to_milvus`: 文档分割、向量化、存储到 Milvus
   - `add_documents`: 完整的文档入库流程编排
   - 可配置 chunk_size（默认500）和 chunk_overlap（默认50）
+  - 依赖注入设计，避免循环依赖
 
-#### 2.6 RAG 检索服务（`internal/rag/rag_service.py`）
+#### 2.10 RAG 检索服务（`internal/rag/rag_service.py`）
 - ✅ **智能检索流程**
   1. **向量检索**: 在 Milvus 中检索 Top-K 候选文档
   2. **Reranker 重排序**: 语义相关性二次评分（可选）
@@ -118,30 +187,118 @@
 - ✅ **完整测试套件**
   - `test/test_mongodb.py`: MongoDB CRUD 测试
   - `test/test_milvus.py`: Milvus 连接和检索测试
+  - `test/test_redis.py`: Redis 操作测试 🆕
   - `test/test_rag.py`: RAG 完整流程测试（对比 Reranker 效果）
-  - `test/test_async_summary.py`: 聊天历史总结测试
-  - `test/test_full_rag_qa.py`: **完整的 RAG QA 演示**
+  - `test/test_summary_mechanism.py`: 延迟总结机制测试 🆕
+  - `test/test_chat_service.py`: ChatService 完整测试 🆕
+  - `test/test_full_rag_qa.py`: **完整的 RAG QA 演示（ChatService + Agent 架构）** 🆕
 
-- ✅ **交互式 QA Demo**（`test/test_full_rag_qa.py`）
+- ✅ **交互式 RAG QA Demo**（`test/test_full_rag_qa.py`）
+  - **ChatService 架构**: Session 管理 + Redis 持久化
+  - **ReAct Agent**: 真实工具调用，完整推理过程
+  - **智能检索**: 向量匹配 + Reranker + 去重
+  - **历史管理**: 可选保存完整思考过程或只保存问答
+  - **交互命令**: `history`（查看历史）、`clear`（清空）、`exit`（退出）
   - 真实文档处理（.docx）
   - MongoDB + Milvus 双重存储
   - 实时向量检索
-  - Reranker 重排序
   - 流式 LLM 对话
-  - 显示检索到的文档片段
 
-### 4. 开发环境
+### 4. 开发环境与配置
 
 - ✅ **完整的依赖管理**
   - `requirements.txt`: 所有 Python 依赖
   - `.gitignore`: Git 忽略规则
-  - `.env` 环境变量配置（MongoDB、Milvus、API Keys）
+  - `env_template.txt`: 环境变量模板
+
+- ✅ **环境配置**（`pkg/constants/constants.py`）
+  - **统一配置管理**: 所有配置从 `.env` 加载
+  - **智能设备选择**: 自动检测 CUDA/MPS/CPU
+  - **HuggingFace 离线模式**: 避免联网检查 🆕
+    - `TRANSFORMERS_OFFLINE=1`
+    - `HF_HUB_OFFLINE=1`
+  - **Redis 配置**: Host、Port、DB、Password 🆕
+  - **导入顺序优化**: 确保环境变量在库导入前设置 🆕
 
 - ✅ **Docker 部署**
   - `milvus/docker-compose.yml`: Milvus 生态一键部署
     - Milvus 向量数据库
     - MinIO 对象存储
     - Attu 可视化管理界面（http://localhost:8000）
+  - Redis 部署（推荐 Docker）
+
+---
+
+## 🎯 架构亮点 🆕
+
+### 1. 分层架构 - 单一职责原则
+```
+┌─────────────────────────────────────────────────┐
+│             ChatService（会话层）                 │
+│  - Session 管理                                  │
+│  - Redis 持久化                                  │
+│  - Agent 编排                                    │
+│  - 历史记录粒度控制                               │
+└──────────────┬──────────────────────────────────┘
+               │
+        ┌──────┴───────┐
+        ▼              ▼
+┌─────────────┐  ┌─────────────┐
+│ LLMService  │  │ ReActAgent  │
+│ - 模型调用   │  │ - 工具调用   │
+│ - Prompt    │  │ - 推理循环   │
+│ - 历史管理   │  │ - 强制约束   │
+└─────────────┘  └─────────────┘
+```
+
+**优势**：
+- ✅ 各层职责清晰，易于测试和维护
+- ✅ ChatService 统一入口，屏蔽底层复杂性
+- ✅ LLMService 专注对话，Agent 专注工具调用
+- ✅ Session、Redis、历史记录由 ChatService 统一管理
+
+### 2. 简化 API - 降低使用难度
+```python
+# ❌ 旧方式（7+ 行，容易出错）
+llm = LLMService(...)
+agent = create_react_agent(llm, tools)
+answer = agent.run(question)
+llm.add_to_history("user", question)
+llm.add_to_history("assistant", answer)
+chat_service._save_history_to_redis()
+
+# ✅ 新方式（统一的 chat 方法）
+# 普通对话
+for chunk in chat_service.chat("你好"):
+    print(chunk, end="")
+
+# Agent 对话（1 行，全自动）
+answer = chat_service.chat(
+    user_message="问题",
+    use_agent=True,
+    agent_tools={"knowledge_search": knowledge_search}
+)
+```
+
+### 3. 智能历史管理
+- **延迟总结**：不阻塞当前对话，在下次对话前执行
+- **自动同步**：历史记录自动保存到 Redis
+- **可控粒度**：`save_only_answer=True` 只保存问答，自动清理中间推理
+- **Session 隔离**：多用户、多会话互不干扰
+
+### 4. 环境变量优化
+```python
+# 🔥 关键：constants.py 必须最先导入
+from pkg.constants.constants import RUNNING_MODE  # 设置环境变量
+
+from sentence_transformers import SentenceTransformer  # HuggingFace 库
+```
+
+**优势**：
+- ✅ 自动设置 `TRANSFORMERS_OFFLINE` 和 `HF_HUB_OFFLINE`
+- ✅ 避免 HuggingFace 库联网检查
+- ✅ 智能设备选择（CUDA/MPS/CPU）
+- ✅ 统一配置管理，易于部署
 
 ---
 
@@ -184,11 +341,17 @@
   - 支持跳转到原始文档
 
 #### 2. 缓存与会话管理
-- ⏳ **Redis 集成**（`internal/db/redis.py`）
-  - 热点数据缓存
+- ✅ **Redis 集成**（`internal/db/redis.py`）🆕
+  - 单例连接管理
+  - 完整的 CRUD 操作
   - 多轮对话历史存储
-  - 用户会话管理
+  - 用户会话管理（Session + User）
+  - 自动过期管理
+  
+- ⏳ **高级缓存策略**
+  - 热点数据缓存
   - 检索结果缓存
+  - 缓存预热
 
 #### 3. 异步处理优化
 - ⏳ **Kafka 消息队列**（`internal/Kafka/`）
@@ -317,43 +480,103 @@ pip install -r requirements.txt
 
 ### 2. 配置环境变量
 
-创建 `.env` 文件：
+复制模板并创建 `.env` 文件：
 
 ```bash
+cp env_template.txt .env
+```
+
+然后编辑 `.env`，主要配置项：
+
+```bash
+# ==================== AI 模型配置 ====================
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_DEFAULT_MODEL=llama3.2
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+
+# 运行模式（控制 Embedding 和 Reranker 的设备）
+RUNNING_MODE=cpu  # 可选: cpu, cuda, mps, gpu, auto
+
+# HuggingFace 模型配置（避免联网检查）🆕
+TRANSFORMERS_OFFLINE=1  # 使用本地缓存
+HF_HUB_OFFLINE=1        # 禁用在线检查
+# HF_ENDPOINT=https://hf-mirror.com  # 可选：使用镜像
+
+# ==================== 数据库配置 ====================
 # MongoDB
 MONGODB_URL=mongodb://root:rootpassword@localhost:27017/
 MONGODB_DATABASE=rag_platform
 
-# Milvus
+# Milvus 向量数据库
 MILVUS_HOST=localhost
 MILVUS_PORT=19530
 MILVUS_USER=root
 MILVUS_PASSWORD=rootpassword
 MILVUS_DB_NAME=rag_platform
 
-# DeepSeek API（可选）
-DEEPSEEK_API_KEY=your_api_key
+# Redis 缓存 🆕
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_DB=0
+REDIS_PASSWORD=  # 可选
+
+# ==================== 其他配置 ====================
+# Token 限制配置（用于聊天历史总结）
+MAX_TOKEN_LIMIT_FOR_SUMMARY=6400
 ```
 
-### 3. 启动 Milvus
+### 3. 启动数据库服务
 
 ```bash
+# 启动 Milvus（向量数据库）
 cd milvus
 docker-compose up -d
 
 # 访问 Attu 可视化界面
 # http://localhost:8000
+
+# 启动 Redis（缓存服务）🆕
+docker run -d --name redis -p 6379:6379 redis:latest
+
+# 或者使用持久化
+docker run -d --name redis \
+  -p 6379:6379 \
+  -v redis_data:/data \
+  redis:latest redis-server --appendonly yes
 ```
 
-### 4. 运行 RAG QA 演示
+### 4. 下载模型（首次运行）🆕
+
+```bash
+# Ollama 模型
+ollama pull llama3.2
+
+# HuggingFace 模型（会自动下载到 ~/.cache/huggingface/）
+# 首次运行时会自动下载，或者手动：
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-large-zh-v1.5')"
+python -c "from FlagEmbedding import FlagReranker; FlagReranker('BAAI/bge-reranker-v2-m3')"
+
+# 下载完成后，在 .env 中设置离线模式
+TRANSFORMERS_OFFLINE=1
+HF_HUB_OFFLINE=1
+```
+
+### 5. 运行 RAG QA 演示
 
 ```bash
 # 首次运行：处理文档并存储
 python test/test_full_rag_qa.py
 
 # 后续运行：注释掉文档处理步骤
-# 在 test_full_rag_qa.py 中注释掉：
+# 在 test_full_rag_qa.py 的 main() 函数中注释掉：
 # success = await process_and_store_documents(doc_folder, collection_name)
+
+# 交互式命令：
+# - 输入问题进行提问
+# - 'history': 查看历史记录
+# - 'clear': 清空历史
+# - 'exit' 或 'quit': 退出
 ```
 
 ---
@@ -384,13 +607,21 @@ plantform/
 │   ├── db/                 # 数据库连接
 │   │   ├── mongodb.py      # MongoDB（Beanie ODM）✅
 │   │   ├── milvus.py       # Milvus 向量数据库 ✅
-│   │   └── redis.py        # Redis 缓存（计划中）
+│   │   ├── milvus_config.py # Milvus 优化配置 ✅
+│   │   └── redis.py        # Redis 缓存 ✅ 🆕
 │   ├── model/              # 数据模型 ✅
 │   │   ├── document.py     # 文档模型
-│   │   ├── message.py      # 消息模型
+│   │   ├── message.py      # 消息模型（带 session_id）🆕
+│   │   ├── session.py      # 会话模型 🆕
 │   │   └── user_info.py    # 用户模型
 │   ├── llm/                # LLM 服务 ✅
-│   │   └── llm_service.py  # 统一 LLM 接口
+│   │   └── llm_service.py  # 统一 LLM 接口（简化 API）🆕
+│   ├── chat_service/       # 会话服务 ✅ 🆕
+│   │   ├── chat_service.py # ChatService（Session + Redis + Agent）
+│   │   └── __init__.py
+│   ├── agent/              # ReAct Agent ✅ 🆕
+│   │   ├── react_agent.py  # ReAct Agent 实现
+│   │   └── __init__.py
 │   ├── embedding/          # Embedding 服务 ✅
 │   │   └── embedding_service.py
 │   ├── reranker/           # Reranker 服务 ✅
@@ -415,9 +646,11 @@ plantform/
 ├── test/                   # 测试文件 ✅
 │   ├── test_mongodb.py
 │   ├── test_milvus.py
+│   ├── test_redis.py         # Redis 测试 🆕
 │   ├── test_rag.py
-│   ├── test_async_summary.py
-│   └── test_full_rag_qa.py   # 完整 RAG QA 演示
+│   ├── test_summary_mechanism.py # 延迟总结机制测试 🆕
+│   ├── test_chat_service.py  # ChatService 测试 🆕
+│   └── test_full_rag_qa.py   # 完整 RAG QA 演示（ChatService + Agent）🆕
 ├── milvus/                 # Milvus 部署 ✅
 │   └── docker-compose.yml
 ├── main.py                 # 应用入口
@@ -458,22 +691,63 @@ ollama run llama3.2
 
 ## 📝 开发注意事项
 
-### 1. 模型配置
+### 1. 模型配置 🆕
 - 所有模型配置统一在 `pkg/model_list/` 中管理
 - 使用 `ModelManager` 进行模型选择和初始化
-- 避免硬编码模型名称
+- 避免硬编码模型名称，使用配置常量（如 `BGE_LARGE_ZH_V1_5.name`）
+- **导入顺序**：确保 `constants.py` 在 HuggingFace 库之前导入
+- **离线模式**：设置 `TRANSFORMERS_OFFLINE=1` 和 `HF_HUB_OFFLINE=1`
 
-### 2. 数据库操作
+### 2. 架构设计 🆕
+- **LLMService**: 简化 API，支持 `user_message`（推荐）和 `messages`（高级）
+- **ChatService**: 统一入口，自动管理 Session、Redis、历史记录
+- **ReAct Agent**: 由 ChatService 创建和管理，不直接使用
+- **统一的 chat() 方法**: 支持普通对话和 Agent 对话
+- **推荐用法**：
+  ```python
+  # ✅ 推荐：使用 ChatService 统一 API
+  # 普通对话
+  for chunk in chat_service.chat("你好"):
+      print(chunk, end="")
+  
+  # Agent 对话（工具调用）
+  answer = chat_service.chat(
+      user_message="问题",
+      use_agent=True,
+      agent_tools={"knowledge_search": knowledge_search},
+      save_only_answer=True  # 只保存问答
+  )
+  
+  # ❌ 不推荐：直接使用 Agent
+  # agent = create_react_agent(llm, tools)
+  # answer = agent.run(question)
+  ```
+
+### 3. 数据库操作
 - MongoDB 使用 Beanie ODM 异步操作
 - Milvus 集合需要先 `flush()` 再 `load()` 才能搜索
 - 向量维度必须与 Embedding 模型输出一致（1024维）
+- Redis 使用单例模式，自动连接管理
 
-### 3. RAG 检索
+### 4. RAG 检索
 - Reranker 分数阈值默认为 `-100.0`（因为是 logits）
 - 去重阈值为 `0.02`（相似度 98%）
 - 建议检索 Top-15，Rerank 后返回 Top-5
+- `knowledge_search` 工具的 `max_context_length` 已增至 10000
 
-### 4. 性能优化
+### 5. 性能优化
 - Embedding 和 Reranker 服务使用单例模式
 - 向量检索使用 COSINE 相似度
 - 大文档建议 chunk_size=500, chunk_overlap=50
+- 智能设备选择：自动检测 CUDA/MPS，或手动设置 `RUNNING_MODE`
+
+### 6. 历史记录管理 🆕
+- **ChatService 自动管理**：无需手动调用 `add_to_history` 或 `sync_to_redis`
+- **延迟总结**：在下次对话前执行，不阻塞当前对话
+- **可控粒度**：`save_only_answer=True` 只保存问答（推荐，简洁）
+- **Session 隔离**：每个 Session 独立的历史记录和 Redis 键
+
+### 7. 代码重用与 DRY 🆕
+- 避免重复代码：使用 `_normalize_chunk()` 统一处理不同模型返回值
+- 参数验证：禁止同时传递冲突参数（如 `user_message` 和 `messages`）
+- 依赖注入：使用参数传递依赖（如 `document_processor`），避免循环导入

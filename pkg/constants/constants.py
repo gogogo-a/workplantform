@@ -102,3 +102,16 @@ def _get_device():
     return "cpu"
 
 RUNNING_MODE = _get_device()
+
+# ==================== 邮件服务配置 ====================
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.qq.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() == "true"
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_FROM = os.getenv("EMAIL_FROM", EMAIL_HOST_USER)
+EMAIL_TIMEOUT = int(os.getenv("EMAIL_TIMEOUT", "10"))
+EMAIL_VERIFY_SSL = os.getenv("EMAIL_VERIFY_SSL", "False").lower() == "true"
+
+# ==================== 安全配置 ====================
+SECRET_KEY = os.getenv("SECRET_KEY", "default_secret_key_please_change_in_production")

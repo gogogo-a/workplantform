@@ -45,8 +45,7 @@ env/
 
 # 日志文件
 *.log
-log/
-logs/
+json_log/
 
 # 数据库
 *.db
