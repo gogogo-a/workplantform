@@ -13,7 +13,7 @@ from internal.dto.request import (
     SendEmailCodeRequest
 )
 from internal.service.orm.user_info_sever import user_info_service
-from api.v1.response_control import json_response
+from api.v1.response_controller import json_response
 from log import logger
 
 router = APIRouter(prefix="/api/v1/user", tags=["用户管理"])

@@ -1,0 +1,76 @@
+# ==================== 消息模式配置 ====================
+[message]
+# 消息模式: "channel" (单机内存) 或 "kafka" (分布式队列)
+mode = "kafka"
+
+# Channel 模式配置（单机内存队列）
+[channel]
+# 队列最大容量
+max_size = 1000
+# 消费者数量（并发处理线程数）
+num_consumers = 3
+# 队列超时时间（秒）
+timeout = 5
+
+# Kafka 模式配置（分布式消息队列）
+[kafka]
+# Kafka 服务器地址
+bootstrap_servers = ["localhost:9092"]
+
+# 主题配置
+[kafka.topics]
+# 文档 Embedding 主题
+document_embedding = "document_embedding"
+# 文档删除主题
+document_delete = "document_delete"
+# 批量处理主题
+batch_processing = "batch_processing"
+
+# 生产者配置
+[kafka.producer]
+# 消息确认级别 (0, 1, all)
+acks = "all"
+# 重试次数
+retries = 3
+# 批量大小（字节）
+batch_size = 16384
+# 批量等待时间（毫秒）
+linger_ms = 10
+# 压缩类型 (none, gzip, snappy, lz4, zstd)
+compression_type = "gzip"
+
+# 消费者配置
+[kafka.consumer]
+# 消费者组ID
+group_id = "brainwave_embedding_group"
+# 自动提交偏移量
+enable_auto_commit = true
+# 从最早/最新开始消费 (earliest, latest)
+auto_offset_reset = "latest"
+# 单次拉取最大消息数
+max_poll_records = 100
+# 会话超时时间（毫秒）
+session_timeout_ms = 30000
+
+# ==================== Embedding 配置 ====================
+[embedding]
+# 文本分块大小（字符数）
+chunk_size = 500
+# 文本分块重叠（字符数）
+chunk_overlap = 50
+# 批量处理大小
+batch_size = 32
+# 处理超时时间（秒）
+timeout = 30
+# 重试次数
+max_retries = 3
+
+# ==================== Milvus 配置 ====================
+[milvus]
+# Collection 名称
+collection_name = "documents"
+# 向量维度（根据实际 embedding 模型调整）
+dimension = 1024
+# 批量插入大小
+batch_size = 100
+

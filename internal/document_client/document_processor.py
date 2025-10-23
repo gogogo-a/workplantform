@@ -1,0 +1,531 @@
+"""
+文档处理服务
+统一的文档处理器，整合文档加载、分割、Embedding、存储等功能
+支持同步和异步处理（Channel/Kafka）
+"""
+from typing import Dict, Any, List, Optional
+from pathlib import Path
+from log import logger
+from internal.document_client.message_client import message_client
+from internal.document_client.config_loader import config
+from internal.embedding.embedding_service import embedding_service
+from internal.db.milvus import milvus_client
+from pkg.utils.document_utils import (
+    load_document,
+    split_text,
+    get_file_info,
+    is_supported_file
+)
+
+
+class DocumentProcessor:
+    """
+    统一文档处理器（单例模式）
+    
+    功能：
+    1. 文档加载（PDF, DOCX, TXT）
+    2. 文本分割
+    3. Embedding 生成
+    4. 存储到 Milvus
+    5. 异步任务处理（Channel/Kafka）
+    """
+    
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    def __init__(self):
+        if hasattr(self, '_initialized'):
+            return
+        
+        self.embedding_config = config.embedding_config
+        self.milvus_config = config.milvus_config
+        self.message_client = message_client
+        
+        # 从配置读取分块参数
+        self.chunk_size = self.embedding_config.get('chunk_size', 500)
+        self.chunk_overlap = self.embedding_config.get('chunk_overlap', 50)
+        
+        self._initialized = True
+        logger.info(
+            f"文档处理器已初始化 "
+            f"(分块大小: {self.chunk_size}, 重叠: {self.chunk_overlap})"
+        )
+    
+    # ==================== 同步处理方法 ====================
+    
+    def process_file(
+        self,
+        file_path: str,
+        document_uuid: str,
+        collection_name: Optional[str] = None,
+        extra_metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        同步处理单个文件（加载 -> 分割 -> Embedding -> 存储）
+        
+        Args:
+            file_path: 文件路径
+            document_uuid: 文档 UUID
+            collection_name: Milvus 集合名称（可选）
+            extra_metadata: 额外元数据（可选）
+        
+        Returns:
+            Dict: 处理结果 {success, message, chunks_count, vectors_count}
+        """
+        try:
+            # 1. 验证文件
+            if not is_supported_file(file_path):
+                return {
+                    "success": False,
+                    "message": f"不支持的文件类型: {Path(file_path).suffix}"
+                }
+            
+            file_info = get_file_info(file_path)
+            logger.info(f"开始处理文档: {file_info['name']}, UUID: {document_uuid}")
+            
+            # 2. 加载文档
+            loaded_docs = load_document(file_path)
+            full_content = "\n\n".join([doc["content"] for doc in loaded_docs])
+            
+            # 3. 分割文本
+            chunks = split_text(
+                text=full_content,
+                chunk_size=self.chunk_size,
+                chunk_overlap=self.chunk_overlap,
+                metadata={
+                    "document_uuid": document_uuid,
+                    "filename": file_info['name'],
+                    "source": file_path,
+                    **(extra_metadata or {})
+                }
+            )
+            
+            if not chunks:
+                return {
+                    "success": False,
+                    "message": "文档分割后没有生成文本块"
+                }
+            
+            logger.info(f"文档分割完成: {len(chunks)} 个块")
+            
+            # 4. 批量 Embedding
+            texts = [chunk["content"] for chunk in chunks]
+            embeddings = embedding_service.encode_documents(
+                documents=texts,
+                batch_size=self.embedding_config.get('batch_size', 32),
+                normalize=True
+            )
+            
+            logger.info(f"Embedding 生成完成: {len(embeddings)} 个向量")
+            
+            # 5. 准备 Milvus 数据
+            texts = []
+            metadata_list = []
+            
+            for i, chunk in enumerate(chunks):
+                texts.append(chunk["content"])
+                metadata_list.append({
+                    "document_uuid": document_uuid,
+                    "chunk_index": i,
+                    "chunk_count": len(chunks),
+                    "filename": file_info['name'],
+                    "source": file_path,
+                    **chunk["metadata"]
+                })
+            
+            # 6. 存储到 Milvus
+            if collection_name is None:
+                collection_name = self.milvus_config.get('collection_name', 'documents')
+            
+            # 确保 collection 存在
+            existing_collections = milvus_client.list_collections()
+            if collection_name not in existing_collections:
+                dimension = self.milvus_config.get('dimension', 1024)
+                logger.info(f"创建 Milvus collection: {collection_name}, 维度: {dimension}")
+                milvus_client.create_collection(
+                    collection_name=collection_name,
+                    dimension=dimension,
+                    description="文档向量存储",
+                    metric_type="COSINE"
+                )
+            
+            # 转换 embeddings 为列表
+            embeddings_list = [emb.tolist() for emb in embeddings]
+            
+            ids = milvus_client.insert_vectors(
+                collection_name=collection_name,
+                embeddings=embeddings_list,
+                texts=texts,
+                metadata=metadata_list
+            )
+            success = ids is not None and len(ids) > 0
+            
+            if success:
+                logger.info(
+                    f"✅ 文档处理完成: {file_info['name']}, "
+                    f"UUID: {document_uuid}, "
+                    f"块数: {len(chunks)}, "
+                    f"向量数: {len(embeddings)}"
+                )
+                return {
+                    "success": True,
+                    "message": "处理成功",
+                    "chunks_count": len(chunks),
+                    "vectors_count": len(embeddings),
+                    "document_uuid": document_uuid
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "存储到 Milvus 失败"
+                }
+                
+        except Exception as e:
+            logger.error(f"处理文件失败: {e}", exc_info=True)
+            return {
+                "success": False,
+                "message": f"处理异常: {str(e)}"
+            }
+    
+    def process_text(
+        self,
+        text: str,
+        document_uuid: str,
+        collection_name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        同步处理纯文本（分割 -> Embedding -> 存储）
+        
+        Args:
+            text: 文本内容
+            document_uuid: 文档 UUID
+            collection_name: Milvus 集合名称（可选）
+            metadata: 元数据（可选）
+        
+        Returns:
+            Dict: 处理结果
+        """
+        try:
+            logger.info(f"开始处理文本，UUID: {document_uuid}")
+            
+            # 1. 分割文本
+            chunks = split_text(
+                text=text,
+                chunk_size=self.chunk_size,
+                chunk_overlap=self.chunk_overlap,
+                metadata={
+                    "document_uuid": document_uuid,
+                    **(metadata or {})
+                }
+            )
+            
+            if not chunks:
+                return {
+                    "success": False,
+                    "message": "文本分割后没有生成文本块"
+                }
+            
+            # 2. 批量 Embedding
+            texts = [chunk["content"] for chunk in chunks]
+            embeddings = embedding_service.encode_documents(
+                documents=texts,
+                batch_size=self.embedding_config.get('batch_size', 32),
+                normalize=True
+            )
+            
+            # 3. 准备 Milvus 元数据
+            metadata_list = []
+            for i, chunk in enumerate(chunks):
+                metadata_list.append({
+                    "document_uuid": document_uuid,
+                    "chunk_index": i,
+                    "chunk_count": len(chunks),
+                    **chunk["metadata"]
+                })
+            
+            # 4. 存储到 Milvus
+            if collection_name is None:
+                collection_name = self.milvus_config.get('collection_name', 'documents')
+            
+            # 确保 collection 存在
+            existing_collections = milvus_client.list_collections()
+            if collection_name not in existing_collections:
+                dimension = self.milvus_config.get('dimension', 1024)
+                logger.info(f"创建 Milvus collection: {collection_name}, 维度: {dimension}")
+                milvus_client.create_collection(
+                    collection_name=collection_name,
+                    dimension=dimension,
+                    description="文档向量存储",
+                    metric_type="COSINE"
+                )
+            
+            # 转换 embeddings 为列表
+            embeddings_list = [emb.tolist() for emb in embeddings]
+            
+            ids = milvus_client.insert_vectors(
+                collection_name=collection_name,
+                embeddings=embeddings_list,
+                texts=texts,
+                metadata=metadata_list
+            )
+            success = ids is not None and len(ids) > 0
+            
+            if success:
+                logger.info(f"✅ 文本处理完成, UUID: {document_uuid}, 块数: {len(chunks)}")
+                return {
+                    "success": True,
+                    "message": "处理成功",
+                    "chunks_count": len(chunks),
+                    "vectors_count": len(embeddings)
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "存储到 Milvus 失败"
+                }
+                
+        except Exception as e:
+            logger.error(f"处理文本失败: {e}", exc_info=True)
+            return {
+                "success": False,
+                "message": f"处理异常: {str(e)}"
+            }
+    
+    # ==================== 异步任务方法 ====================
+    
+    def submit_task(self, task: Dict[str, Any]) -> bool:
+        """
+        提交文档处理任务到消息队列（异步）
+        
+        Args:
+            task: 任务字典，包含:
+                - task_type: 任务类型 (file, text, delete, batch)
+                - document_uuid: 文档 UUID
+                - file_path/content: 文件路径或文本内容
+                - metadata: 元数据（可选）
+        
+        Returns:
+            bool: 是否提交成功
+        """
+        try:
+            # 验证任务
+            if 'task_type' not in task:
+                logger.error("任务缺少 task_type 字段")
+                return False
+            
+            task_type = task['task_type']
+            
+            # 根据任务类型选择主题（仅 Kafka 模式需要）
+            topic = None
+            if message_client.mode == 'kafka':
+                topics = config.get('kafka.topics', {})
+                topic_map = {
+                    'file': topics.get('document_embedding', 'document_embedding'),
+                    'text': topics.get('document_embedding', 'document_embedding'),
+                    'delete': topics.get('document_delete', 'document_delete'),
+                    'batch': topics.get('batch_processing', 'batch_processing')
+                }
+                topic = topic_map.get(task_type)
+            
+            # 发送消息
+            success = self.message_client.send_message(
+                message=task,
+                topic=topic
+            )
+            
+            if success:
+                logger.info(f"文档任务已提交: {task_type}, UUID={task.get('document_uuid')}")
+            else:
+                logger.error(f"文档任务提交失败: {task_type}")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"提交任务异常: {e}", exc_info=True)
+            return False
+    
+    def start_processing(self):
+        """启动文档处理消费者"""
+        logger.info("启动文档处理服务...")
+        
+        # 启动不同类型的消费者
+        if message_client.mode == 'channel':
+            # Channel 模式：单个消费者处理所有任务
+            self.message_client.start_consumer(
+                handler=self._process_task
+            )
+        else:
+            # Kafka 模式：为每个主题启动消费者
+            topics = config.get('kafka.topics', {})
+            
+            # Embedding 任务消费者
+            embedding_topic = topics.get('document_embedding', 'document_embedding')
+            self.message_client.start_consumer(
+                handler=self._process_task,
+                topic=embedding_topic
+            )
+            
+            # 删除任务消费者（可选）
+            # delete_topic = topics.get('document_delete', 'document_delete')
+            # self.message_client.start_consumer(
+            #     handler=self._process_delete_task,
+            #     topic=delete_topic
+            # )
+        
+        logger.info("文档处理服务已启动")
+    
+    def _process_task(self, task: Dict[str, Any]):
+        """
+        处理文档任务（分发器）
+        
+        Args:
+            task: 任务字典
+        """
+        task_type = task.get('task_type')
+        
+        try:
+            if task_type == 'file':
+                self._process_file_task(task)
+            elif task_type == 'text':
+                self._process_text_task(task)
+            elif task_type == 'delete':
+                self._process_delete_task(task)
+            elif task_type == 'batch':
+                self._process_batch_task(task)
+            else:
+                logger.warning(f"未知任务类型: {task_type}")
+                
+        except Exception as e:
+            logger.error(f"处理任务失败: {task_type}, 错误: {e}", exc_info=True)
+    
+    def _process_file_task(self, task: Dict[str, Any]):
+        """处理文件任务"""
+        file_path = task.get('file_path')
+        document_uuid = task.get('document_uuid')
+        collection_name = task.get('collection_name')
+        metadata = task.get('metadata', {})
+        
+        if not file_path or not document_uuid:
+            logger.error("文件任务缺少必要字段: file_path, document_uuid")
+            return
+        
+        result = self.process_file(
+            file_path=file_path,
+            document_uuid=document_uuid,
+            collection_name=collection_name,
+            extra_metadata=metadata
+        )
+        
+        if not result['success']:
+            logger.error(f"文件处理失败: {result['message']}")
+    
+    def _process_text_task(self, task: Dict[str, Any]):
+        """处理文本任务"""
+        content = task.get('content')
+        document_uuid = task.get('document_uuid')
+        collection_name = task.get('collection_name')
+        metadata = task.get('metadata', {})
+        
+        if not content or not document_uuid:
+            logger.error("文本任务缺少必要字段: content, document_uuid")
+            return
+        
+        result = self.process_text(
+            text=content,
+            document_uuid=document_uuid,
+                collection_name=collection_name,
+            metadata=metadata
+        )
+        
+        if not result['success']:
+            logger.error(f"文本处理失败: {result['message']}")
+    
+    def _process_delete_task(self, task: Dict[str, Any]):
+        """
+        处理删除任务
+        
+        Args:
+            task: 任务字典，包含 document_id
+        """
+        document_id = task.get('document_id')
+        
+        if not document_id:
+            logger.error("删除任务缺少 document_id")
+            return
+        
+        logger.info(f"删除文档: {document_id}")
+        
+        try:
+            collection_name = self.milvus_config.get('collection_name', 'documents')
+            success = milvus_client.delete_by_ids(
+                collection_name=collection_name,
+                ids=[document_id]
+            )
+            
+            if success:
+                logger.info(f"文档已从 Milvus 删除: {document_id}")
+            else:
+                logger.error(f"从 Milvus 删除失败: {document_id}")
+                
+        except Exception as e:
+            logger.error(f"删除任务异常: {document_id}, 错误: {e}", exc_info=True)
+    
+    def _process_batch_task(self, task: Dict[str, Any]):
+        """
+        处理批量任务
+        
+        Args:
+            task: 任务字典，包含 tasks 列表
+        """
+        tasks = task.get('tasks', [])
+        
+        if not tasks:
+            logger.error("批量任务缺少 tasks")
+            return
+        
+        logger.info(f"处理批量任务，任务数: {len(tasks)}")
+        
+        # 批量处理
+        for sub_task in tasks:
+            self._process_task(sub_task)
+    
+    def stop(self):
+        """停止文档处理服务"""
+        logger.info("正在停止文档处理服务...")
+        self.message_client.stop()
+        logger.info("文档处理服务已停止")
+
+
+# 创建全局实例
+document_processor = DocumentProcessor()
+
+
+if __name__ == "__main__":
+    # 测试代码
+    print("=" * 80)
+    print("文档处理服务测试")
+    print("=" * 80)
+    
+    # 提交测试任务
+    test_task = {
+        "task_type": "embedding",
+        "document_id": "test_doc_001",
+        "content": "这是一个测试文档，用于验证 Embedding 和 Milvus 存储功能",
+        "metadata": {
+            "title": "测试文档",
+            "author": "白总"
+        }
+    }
+    
+    success = document_processor.submit_task(test_task)
+    print(f"\n任务提交结果: {success}")
+    
+    # 获取统计信息
+    stats = message_client.get_stats()
+    print(f"\n统计信息: {stats}")
+
