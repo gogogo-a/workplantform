@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: brainwave_mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      # 设置 root 用户
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: rootpassword
+      # 设置时区
+      TZ: Asia/Shanghai
+    volumes:
+      # 持久化数据
+      - mongodb_data:/data/db
+      # 持久化配置
+      - mongodb_config:/data/configdb
+    command: --auth
+    networks:
+      - brainwave_network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
+
+networks:
+  brainwave_network:
+    driver: bridge
+

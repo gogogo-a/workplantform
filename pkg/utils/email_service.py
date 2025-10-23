@@ -23,6 +23,7 @@ from pkg.constants.constants import (
     REDIS_DB,
     REDIS_PASSWORD
 )
+from internal.db.redis import redis_client  # 直接导入全局单例实例
 
 
 class EmailService:
@@ -264,13 +265,9 @@ class EmailService:
                 "captcha": None
             }
         
-        # 5. 保存到 Redis（可选）
+        # 5. 保存到 Redis（可选，直接使用全局单例实例）
         if save_to_redis:
             try:
-                from internal.db.redis import RedisClient
-                redis_client = RedisClient()
-                redis_client.connect()
-                
                 # 保存验证码，key 为邮箱，value 为验证码，过期时间为指定分钟数
                 redis_client.set(
                     key=f"email_captcha:{email}",
@@ -301,11 +298,7 @@ class EmailService:
             dict: 包含 success, message
         """
         try:
-            from internal.db.redis import RedisClient
-            redis_client = RedisClient()
-            redis_client.connect()
-            
-            # 从 Redis 获取验证码
+            # 从 Redis 获取验证码（直接使用全局单例实例）
             key = f"email_captcha:{email}"
             stored_captcha = redis_client.get(key)
             
