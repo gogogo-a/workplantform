@@ -1,25 +1,22 @@
 """
-用户信息控制器
+用户信息控制器 (RESTful 风格)
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Query, Path
 from internal.dto.request import (
     RegisterRequest,
     LoginRequest,
     EmailLoginRequest,
-    GetUserInfoRequest,
     UpdateUserInfoRequest,
-    GetUserInfoListRequest,
-    AbleUsersRequest,
     SendEmailCodeRequest
 )
 from internal.service.orm.user_info_sever import user_info_service
 from api.v1.response_controller import json_response
 from log import logger
 
-router = APIRouter(prefix="/api/v1/user", tags=["用户管理"])
+router = APIRouter(prefix="/users", tags=["用户管理"])
 
 
-@router.post("/register")
+@router.post("", summary="用户注册")
 async def register(req: RegisterRequest):
     """
     用户注册
@@ -39,7 +36,7 @@ async def register(req: RegisterRequest):
         return json_response("系统错误", -1)
 
 
-@router.post("/login")
+@router.post("/login", summary="用户登录")
 async def login(req: LoginRequest):
     """
     用户登录（昵称+密码）
@@ -59,7 +56,7 @@ async def login(req: LoginRequest):
         return json_response("系统错误", -1)
 
 
-@router.post("/email-login")
+@router.post("/email-login", summary="邮箱验证码登录")
 async def email_login(req: EmailLoginRequest):
     """
     邮箱验证码登录
@@ -79,12 +76,43 @@ async def email_login(req: EmailLoginRequest):
         return json_response("系统错误", -1)
 
 
-@router.post("/info")
-async def get_user_info(req: GetUserInfoRequest):
-    """获取用户信息"""
+@router.get("", summary="获取用户列表")
+async def get_user_list(
+    owner_id: str = Query(default=None, description="拥有者ID"),
+    page: int = Query(default=1, ge=1, description="页码"),
+    page_size: int = Query(default=10, ge=1, le=100, description="每页数量")
+):
+    """
+    获取用户列表
+    
+    - **owner_id**: 拥有者ID（可选）
+    - **page**: 页码
+    - **page_size**: 每页数量
+    """
     try:
-        logger.info(f"获取用户信息请求: {req.uuid}")
-        message, user_info, ret = await user_info_service.get_user_info(req.uuid)
+        logger.info(f"获取用户列表请求: page={page}, page_size={page_size}")
+        message, user_list, ret = await user_info_service.get_user_info_list(
+            owner_id, page, page_size
+        )
+        return json_response(message, ret, user_list)
+        
+    except Exception as e:
+        logger.error(f"获取用户列表接口异常: {str(e)}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
+@router.get("/{user_id}", summary="获取用户详情")
+async def get_user_info(
+    user_id: str = Path(..., description="用户UUID")
+):
+    """
+    获取用户详情
+    
+    - **user_id**: 用户UUID
+    """
+    try:
+        logger.info(f"获取用户信息请求: {user_id}")
+        message, user_info, ret = await user_info_service.get_user_info(user_id)
         
         if user_info:
             return json_response(message, ret, user_info.model_dump(mode='json'))
@@ -95,11 +123,21 @@ async def get_user_info(req: GetUserInfoRequest):
         return json_response("系统错误", -1)
 
 
-@router.post("/update")
-async def update_user_info(req: UpdateUserInfoRequest):
-    """更新用户信息"""
+@router.patch("/{user_id}", summary="更新用户信息")
+async def update_user_info(
+    user_id: str = Path(..., description="用户UUID"),
+    req: UpdateUserInfoRequest = None
+):
+    """
+    更新用户信息
+    
+    - **user_id**: 用户UUID
+    - **req**: 更新的用户信息
+    """
     try:
-        logger.info(f"更新用户信息请求: {req.uuid}")
+        # 将路径参数的 user_id 设置到 req 中
+        req.uuid = user_id
+        logger.info(f"更新用户信息请求: {user_id}")
         message, ret = await user_info_service.update_user_info(req)
         return json_response(message, ret)
         
@@ -108,27 +146,18 @@ async def update_user_info(req: UpdateUserInfoRequest):
         return json_response("系统错误", -1)
 
 
-@router.post("/list")
-async def get_user_info_list(req: GetUserInfoListRequest):
-    """获取用户列表"""
+@router.delete("/{user_id}", summary="删除用户")
+async def delete_user(
+    user_id: str = Path(..., description="用户UUID")
+):
+    """
+    删除单个用户
+    
+    - **user_id**: 用户UUID
+    """
     try:
-        logger.info(f"获取用户列表请求: page={req.page}, page_size={req.page_size}")
-        message, user_list, ret = await user_info_service.get_user_info_list(
-            req.owner_id, req.page, req.page_size
-        )
-        return json_response(message, ret, user_list)
-        
-    except Exception as e:
-        logger.error(f"获取用户列表接口异常: {str(e)}", exc_info=True)
-        return json_response("系统错误", -1)
-
-
-@router.post("/delete")
-async def delete_users(req: AbleUsersRequest):
-    """批量删除用户"""
-    try:
-        logger.info(f"删除用户请求: {len(req.uuid_list)} 个")
-        message, ret = await user_info_service.delete_users(req.uuid_list)
+        logger.info(f"删除用户请求: {user_id}")
+        message, ret = await user_info_service.delete_users([user_id])
         return json_response(message, ret)
         
     except Exception as e:
@@ -136,20 +165,7 @@ async def delete_users(req: AbleUsersRequest):
         return json_response("系统错误", -1)
 
 
-@router.post("/set-admin")
-async def set_admin(req: AbleUsersRequest):
-    """批量设置管理员"""
-    try:
-        logger.info(f"设置管理员请求: {len(req.uuid_list)} 个, is_admin={req.is_admin}")
-        message, ret = await user_info_service.set_admin(req.uuid_list, req.is_admin)
-        return json_response(message, ret)
-        
-    except Exception as e:
-        logger.error(f"设置管理员接口异常: {str(e)}", exc_info=True)
-        return json_response("系统错误", -1)
-
-
-@router.post("/send-email-code")
+@router.post("/email-code", summary="发送邮箱验证码")
 async def send_email_code(req: SendEmailCodeRequest):
     """
     发送邮箱验证码
@@ -164,4 +180,3 @@ async def send_email_code(req: SendEmailCodeRequest):
     except Exception as e:
         logger.error(f"发送验证码接口异常: {str(e)}", exc_info=True)
         return json_response("系统错误", -1)
-

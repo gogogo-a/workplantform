@@ -17,7 +17,8 @@ class ReActAgent:
         llm_service,
         tools: Dict[str, Callable],
         max_iterations: int = 5,
-        verbose: bool = True
+        verbose: bool = True,
+        callback: Optional[Callable] = None
     ):
         """
         初始化 ReAct Agent
@@ -27,11 +28,13 @@ class ReActAgent:
             tools: 工具字典 {tool_name: tool_function}
             max_iterations: 最大迭代次数
             verbose: 是否打印详细信息
+            callback: 回调函数，用于实时推送事件 callback(event_type, content)
         """
         self.llm = llm_service
         self.tools = tools
         self.max_iterations = max_iterations
         self.verbose = verbose
+        self.callback = callback
     
     def _parse_action(self, text: str) -> Tuple[Optional[str], Optional[str]]:
         """
@@ -125,7 +128,12 @@ class ReActAgent:
             最终答案
         """
         conversation = []
-        current_input = f"用户问题: {question}\n\n请按照 Thought-Action 的格式回答（如果需要工具，系统会返回 Observation）。"
+        # 🔥 关键修改：明确标记这是当前用户的新问题，与历史记录区分
+        current_input = f"""⚠️ 重要：这是用户当前的新问题，请专注于回答这个问题，不要混淆历史对话。
+
+【当前用户问题】: {question}
+
+请按照 Thought-Action 的格式回答（如果需要工具，系统会返回 Observation）。"""
         last_action = None  # 记录上一次的 Action，用于检测重复
         has_observation = False  # 标记是否已经收到 Observation
         
@@ -150,11 +158,15 @@ class ReActAgent:
                             stop_chunk = remaining[len(response):]
                             print(stop_chunk, end='', flush=True)
                             response += stop_chunk
+                            if self.callback:
+                                self.callback("llm_chunk", stop_chunk)
                         print()
                         if self.verbose:
                             print("\n⚠️  检测到 LLM 尝试生成 Observation，已停止")
                         break
                     print(chunk, end='', flush=True)
+                    if self.callback:
+                        self.callback("llm_chunk", chunk)
                     response += chunk
                 else:
                     print()

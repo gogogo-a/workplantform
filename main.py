@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from internal.db.mongodb import init_mongodb, close_mongodb
 from internal.db.milvus import milvus_client  # 直接导入全局单例实例
 from internal.db.redis import redis_client  # 直接导入全局单例实例
+from internal.document_client.document_processor import document_processor
 from internal.http_sever.app import create_app
 from log import logger
 
@@ -44,6 +45,11 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("⚠️  Redis 连接失败")
         
+        # ==================== 启动文档处理服务 ====================
+        logger.info("📝 正在启动文档处理服务...")
+        document_processor.start_processing()
+        logger.info("✓ 文档处理服务已启动（Kafka 消费者运行中）")
+        
         logger.info("=" * 80)
         logger.info("✅ 所有服务启动完成")
         logger.info("=" * 80)
@@ -74,6 +80,12 @@ async def lifespan(app: FastAPI):
             logger.info("✓ Milvus 连接已关闭")
         except Exception as e:
             logger.error(f"关闭 Milvus 失败: {e}")
+        
+        try:
+            document_processor.stop()
+            logger.info("✓ 文档处理服务已停止")
+        except Exception as e:
+            logger.error(f"停止文档处理服务失败: {e}")
         
         logger.info("=" * 80)
         logger.info("👋 应用已关闭")

@@ -5,6 +5,9 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from api.v1.user_info_controller import router as user_router
+from api.v1.document_controller import router as document_router
+from api.v1.session_controller import router as session_router
+from api.v1.message_controller import router as message_router
 from log import logger
 
 
@@ -24,8 +27,16 @@ def setup_routes(app: FastAPI):
     # ==================== 用户相关路由 ====================
     app.include_router(user_router)
     
+    # ==================== 文档相关路由 ====================
+    app.include_router(document_router)
+    
+    # ==================== 会话相关路由 ====================
+    app.include_router(session_router)
+    
+    # ==================== 消息相关路由 ====================
+    app.include_router(message_router)
+    
     # 可以继续添加其他路由
-    # app.include_router(document_router)
     # app.include_router(chat_router)
     
     logger.info("✓ 路由注册完成")

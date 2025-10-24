@@ -1,7 +1,7 @@
 """
 API v1 版本
 """
-from .response_control import (
+from .response_controller import (
     json_response,
     success_response,
     error_response,

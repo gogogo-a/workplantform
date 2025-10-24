@@ -4,6 +4,7 @@
 使用 Beanie ODM 映射到 MongoDB
 """
 from datetime import datetime
+from typing import Optional
 from beanie import Document
 from pydantic import Field
 import uuid as uuid_module
@@ -17,6 +18,8 @@ class SessionModel(Document):
         description="会话唯一ID"
     )
     user_id: str = Field(..., description="用户ID")
+    name: str = Field(default="新会话", description="会话名称")
+    last_message: str = Field(default="", description="最后一条消息")
     create_at: datetime = Field(default_factory=datetime.now, description="创建时间")
     update_at: datetime = Field(default_factory=datetime.now, description="更新时间")
     

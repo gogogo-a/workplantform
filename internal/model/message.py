@@ -18,6 +18,7 @@ class MessageModel(Document):
     send_id: str = Field(..., description="发送者uuid")
     send_name: str = Field(..., description="发送者昵称")
     send_avatar: str = Field(..., description="发送者头像")
+    send_type: int = Field(..., description="发送者类型，0.用户，1.AI，2.系统")
     receive_id: str = Field(..., description="接受者uuid")
     file_type: Optional[str] = Field(None, description="文件类型")
     file_name: Optional[str] = Field(None, description="文件名")
