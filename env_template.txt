@@ -31,6 +31,7 @@ MILVUS_PORT=19530
 MILVUS_USER=root
 MILVUS_PASSWORD=rootpassword
 MILVUS_DB_NAME=rag_platform
+MILVUS_COLLECTION_NAME=rag_documents
 
 # Redis 缓存配置
 REDIS_HOST=localhost
@@ -62,4 +63,8 @@ SECRET_KEY=your_secret_key_change_this_in_production_min_32_chars
 
 # Token 限制配置（用于聊天历史总结）
 MAX_TOKEN_LIMIT_FOR_SUMMARY=6400
+
+# 触发总结的消息数量阈值（超过此数量自动生成总结并保存为 send_type=2）
+# 默认值：10（即每10条新消息生成一次总结）
+SUMMARY_MESSAGE_THRESHOLD=10
 

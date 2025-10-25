@@ -10,6 +10,7 @@ from internal.document_client.message_client import message_client
 from internal.document_client.config_loader import config
 from internal.embedding.embedding_service import embedding_service
 from internal.db.milvus import milvus_client
+from pkg.constants.constants import MILVUS_COLLECTION_NAME
 from pkg.utils.document_utils import (
     load_document,
     split_text,
@@ -139,7 +140,7 @@ class DocumentProcessor:
             
             # 6. 存储到 Milvus
             if collection_name is None:
-                collection_name = self.milvus_config.get('collection_name', 'documents')
+                collection_name = MILVUS_COLLECTION_NAME
             
             # 确保 collection 存在
             existing_collections = milvus_client.list_collections()
@@ -250,7 +251,7 @@ class DocumentProcessor:
             
             # 4. 存储到 Milvus
             if collection_name is None:
-                collection_name = self.milvus_config.get('collection_name', 'documents')
+                collection_name = MILVUS_COLLECTION_NAME
             
             # 确保 collection 存在
             existing_collections = milvus_client.list_collections()
@@ -379,6 +380,33 @@ class DocumentProcessor:
         
         logger.info("文档处理服务已启动")
     
+    def _update_document_status_sync(
+        self, 
+        document_uuid: str, 
+        status: int,
+        page: Optional[int] = None,
+        content: Optional[str] = None
+    ):
+        """
+        在同步上下文中更新文档状态（供 Kafka 消费者使用）
+        直接调用同步版本，避免事件循环冲突
+        
+        Args:
+            document_uuid: 文档UUID
+            status: 状态码
+            page: 文档页数（可选）
+            content: 文档内容（可选）
+        """
+        from internal.service.orm.document_sever import document_service
+        
+        # 直接调用同步版本，使用 pymongo 而不是 beanie
+        return document_service.update_document_status_sync(
+            document_uuid, 
+            status, 
+            page, 
+            content
+        )
+    
     def _process_task(self, task: Dict[str, Any]):
         """
         处理文档任务（分发器）
@@ -412,6 +440,11 @@ class DocumentProcessor:
         
         if not file_path or not document_uuid:
             logger.error("文件任务缺少必要字段: file_path, document_uuid")
+            # 更新状态为处理失败
+            try:
+                self._update_document_status_sync(document_uuid, 3)
+            except Exception as e:
+                logger.error(f"更新文档状态失败: {e}")
             return
         
         result = self.process_file(
@@ -421,8 +454,23 @@ class DocumentProcessor:
             extra_metadata=metadata
         )
         
-        if not result['success']:
-            logger.error(f"文件处理失败: {result['message']}")
+        # 根据处理结果更新文档状态
+        try:
+            if result['success']:
+                # 处理成功：status=2（处理完成）
+                chunks_count = result.get('chunks_count', 0)
+                self._update_document_status_sync(
+                    document_uuid, 
+                    status=2,
+                    page=chunks_count  # 将 chunks_count 存储到 page 字段
+                )
+                logger.info(f"✅ 文档处理完成，状态已更新: {document_uuid}")
+            else:
+                # 处理失败：status=3（处理失败）
+                self._update_document_status_sync(document_uuid, 3)
+                logger.error(f"❌ 文档处理失败: {result['message']}, 状态已更新: {document_uuid}")
+        except Exception as e:
+            logger.error(f"更新文档状态时发生异常: {e}", exc_info=True)
     
     def _process_text_task(self, task: Dict[str, Any]):
         """处理文本任务"""
@@ -461,7 +509,7 @@ class DocumentProcessor:
         logger.info(f"删除文档: {document_id}")
         
         try:
-            collection_name = self.milvus_config.get('collection_name', 'documents')
+            collection_name = MILVUS_COLLECTION_NAME
             success = milvus_client.delete_by_ids(
                 collection_name=collection_name,
                 ids=[document_id]

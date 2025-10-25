@@ -6,7 +6,8 @@ from .user_request import (
     LoginRequest,
     EmailLoginRequest,
     UpdateUserInfoRequest,
-    SendEmailCodeRequest
+    SendEmailCodeRequest,
+    SetAdminRequest
 )
 from .session_request import (
     UpdateSessionRequest
@@ -21,6 +22,7 @@ __all__ = [
     'EmailLoginRequest',
     'UpdateUserInfoRequest',
     'SendEmailCodeRequest',
+    'SetAdminRequest',
     'UpdateSessionRequest',
     'SendMessageRequest'
 ]

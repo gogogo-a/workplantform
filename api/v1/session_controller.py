@@ -1,10 +1,11 @@
 """
 会话管理 API 控制器 (RESTful 风格)
 """
-from fastapi import APIRouter, Query, Path
+from fastapi import APIRouter, Query, Path, Request
 from internal.dto.request import UpdateSessionRequest
 from internal.service.orm.session_sever import session_service
 from api.v1.response_controller import json_response
+from pkg.middleware.auth import get_user_from_request
 from log import logger
 
 router = APIRouter(prefix="/sessions", tags=["会话管理"])
@@ -12,14 +13,13 @@ router = APIRouter(prefix="/sessions", tags=["会话管理"])
 
 @router.get("", summary="获取会话列表")
 async def get_session_list(
-    user_id: str = Query(..., description="用户ID"),
+    request: Request,
     page: int = Query(default=1, ge=1, description="页码"),
     page_size: int = Query(default=20, ge=1, le=100, description="每页数量")
 ):
     """
-    获取用户的会话列表
+    获取用户的会话列表（用户ID从Token中自动解析）
     
-    - **user_id**: 用户ID（必填）
     - **page**: 页码（从1开始，默认1）
     - **page_size**: 每页数量（默认20，最大100）
     
@@ -34,6 +34,10 @@ async def get_session_list(
       - update_at: 更新时间
     """
     try:
+        # 从token中获取用户ID
+        current_user = get_user_from_request(request)
+        user_id = current_user.get("user_id")
+        
         logger.info(f"收到获取会话列表请求: user_id={user_id}, page={page}, page_size={page_size}")
         message, ret, data = await session_service.get_session_list(
             user_id=user_id,

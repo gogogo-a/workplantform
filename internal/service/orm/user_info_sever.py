@@ -164,7 +164,7 @@ class UserInfoService:
                 return "用户不存在", None, -2
             
             response = UserInfoResponse.from_orm(user)
-            logger.info(f"获取用户信息成功: {user.username} ({user.uuid})")
+            logger.info(f"获取用户信息成功: {user.nickname} ({user.uuid})")
             
             return "获取成功", response, 0
             

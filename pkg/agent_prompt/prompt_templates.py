@@ -43,6 +43,7 @@ AGENT_RAG_PROMPT = """你是一个具有工具调用能力的智能问答助手�
 2. 不要自己写 Observation，系统会自动执行工具并返回结果
 3. 不要一次性生成完整的 Thought-Action-Observation-Answer
 4. 等待系统返回 Observation 后，你会在下一轮回答
+5. 尽量使用markdown格式输出，不要使用纯文本
 
 **输出格式：**
 Thought: [你的分析]

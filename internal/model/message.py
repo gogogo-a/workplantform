@@ -15,6 +15,7 @@ class MessageModel(Document):
     uuid: str = Field(..., description="消息uuid")
     session_id: str = Field(..., description="会话ID")
     content: str = Field(..., description="消息内容")
+    extra_data: Optional[dict] = Field(None, description="额外数据")
     send_id: str = Field(..., description="发送者uuid")
     send_name: str = Field(..., description="发送者昵称")
     send_avatar: str = Field(..., description="发送者头像")

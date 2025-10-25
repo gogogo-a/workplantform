@@ -6,12 +6,14 @@ from typing import Optional
 
 
 class SendMessageRequest(BaseModel):
-    """发送消息请求 - POST /messages"""
+    """发送消息请求 - POST /messages
+    
+    注意：user_id 从 JWT Token 中自动解析，不需要前端传递
+    """
     session_id: Optional[str] = Field(None, description="会话ID（可选，不提供则创建新会话）")
     content: str = Field(..., min_length=1, description="消息内容")
-    user_id: str = Field(..., description="用户ID")
-    send_name: str = Field(default="用户", description="发送者昵称")
-    send_avatar: str = Field(default="", description="发送者头像URL")
+    send_name: Optional[str] = Field(None, description="发送者昵称（可选，不提供则使用token中的昵称）")
+    send_avatar: Optional[str] = Field(None, description="发送者头像URL（可选）")
     file_type: Optional[str] = Field(None, description="文件类型（text/image/file）")
     file_name: Optional[str] = Field(None, description="文件名")
     file_size: Optional[str] = Field(None, description="文件大小")

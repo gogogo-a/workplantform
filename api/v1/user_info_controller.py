@@ -7,7 +7,8 @@ from internal.dto.request import (
     LoginRequest,
     EmailLoginRequest,
     UpdateUserInfoRequest,
-    SendEmailCodeRequest
+    SendEmailCodeRequest,
+    SetAdminRequest
 )
 from internal.service.orm.user_info_sever import user_info_service
 from api.v1.response_controller import json_response
@@ -162,6 +163,62 @@ async def delete_user(
         
     except Exception as e:
         logger.error(f"删除用户接口异常: {str(e)}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
+@router.delete("/{user_id_list}", summary="批量删除用户")
+async def delete_users(
+    user_id_list: str = Path(..., description="用户UUID列表（逗号分隔）")
+):
+    """
+    批量删除用户
+    
+    - **user_id_list**: 用户UUID列表，用逗号分隔，例如: "uuid1,uuid2,uuid3"
+    
+    示例: DELETE /users/uuid1,uuid2,uuid3
+    """
+    try:
+        # 解析逗号分隔的 UUID 列表
+        uuid_list = [uid.strip() for uid in user_id_list.split(',') if uid.strip()]
+        
+        if not uuid_list:
+            return json_response("用户ID列表不能为空", -2)
+        
+        logger.info(f"批量删除用户请求: {len(uuid_list)} 个用户")
+        message, ret = await user_info_service.delete_users(uuid_list)
+        return json_response(message, ret)
+        
+    except Exception as e:
+        logger.error(f"批量删除用户接口异常: {str(e)}", exc_info=True)
+        return json_response("系统错误", -1)
+
+
+@router.patch("/set-admin", summary="设置管理员")
+async def set_admin(req: SetAdminRequest):
+    """
+    设置或取消用户的管理员权限
+    
+    需要提供:
+    - **user_id**: 用户UUID
+    - **is_admin**: 是否为管理员 (true: 设置为管理员, false: 取消管理员)
+    
+    示例:
+    ```json
+    {
+        "user_id": "550e8400-e29b-41d4-a716-446655440000",
+        "is_admin": true
+    }
+    ```
+    """
+    try:
+        logger.info(f"设置管理员请求: user_id={req.user_id}, is_admin={req.is_admin}")
+        
+        # Service 层期望接收 List[str]，所以传入单个用户ID的列表
+        message, ret = await user_info_service.set_admin([req.user_id], req.is_admin)
+        return json_response(message, ret)
+        
+    except Exception as e:
+        logger.error(f"设置管理员接口异常: {str(e)}", exc_info=True)
         return json_response("系统错误", -1)
 
 

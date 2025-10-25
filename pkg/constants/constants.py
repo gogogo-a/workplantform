@@ -39,6 +39,9 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 # Token 限制配置
 MAX_TOKEN = int(os.getenv("MAX_TOKEN_LIMIT_FOR_SUMMARY", "6400"))
 
+# 触发总结的消息数量阈值
+SUMMARY_MESSAGE_THRESHOLD = int(os.getenv("SUMMARY_MESSAGE_THRESHOLD", "10"))
+
 # MongoDB 配置
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://root:rootpassword@localhost:27017/")
 MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "rag_platform")
@@ -49,6 +52,7 @@ MILVUS_PORT = int(os.getenv("MILVUS_PORT", "19530"))
 MILVUS_USER = os.getenv("MILVUS_USER", "root")
 MILVUS_PASSWORD = os.getenv("MILVUS_PASSWORD", "rootpassword")
 MILVUS_DB_NAME = os.getenv("MILVUS_DB_NAME", "rag_platform")
+MILVUS_COLLECTION_NAME = os.getenv("MILVUS_COLLECTION_NAME", "documents")
 
 # Redis 缓存配置
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")

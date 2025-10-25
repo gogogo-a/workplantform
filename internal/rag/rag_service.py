@@ -17,6 +17,7 @@ from internal.embedding.embedding_service import embedding_service
 from internal.db.milvus import milvus_client
 from internal.reranker.reranker_service import reranker_service
 from pkg.model_list import BGE_LARGE_ZH_V1_5, BGE_RERANKER_V2_M3  # 默认模型配置
+from pkg.constants.constants import MILVUS_COLLECTION_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class RAGService:
     
     def __init__(
         self,
-        collection_name: str = "documents",
+        collection_name: Optional[str] = None,
         embedding_model: Optional[str] = None,
         reranker_model: Optional[str] = None,
         top_k: int = 5,
@@ -47,6 +48,10 @@ class RAGService:
             embedding_model = BGE_LARGE_ZH_V1_5.name
         if reranker_model is None:
             reranker_model = BGE_RERANKER_V2_M3.name
+        
+        # 如果没有指定 collection_name，使用全局配置
+        if collection_name is None:
+            collection_name = MILVUS_COLLECTION_NAME
         
         self.collection_name = collection_name
         self.embedding_model = embedding_model
@@ -368,9 +373,9 @@ class RAGService:
             return {}
 
 
-# 创建默认 RAG 检索服务实例（使用默认模型配置 BGE_LARGE_ZH_V1_5 和 BGE_RERANKER_V2_M3）
+# 创建默认 RAG 检索服务实例（使用全局配置和默认模型 BGE_LARGE_ZH_V1_5、BGE_RERANKER_V2_M3）
 rag_service = RAGService(
-    collection_name="rag_documents",
+    collection_name=None,  # 使用全局配置 MILVUS_COLLECTION_NAME
     top_k=5,
     use_reranker=True
 )

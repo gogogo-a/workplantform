@@ -13,6 +13,7 @@ from internal.model.document import DocumentModel
 from internal.db.milvus import milvus_client
 from internal.document_client.document_processor import document_processor
 from internal.document_client.config_loader import config
+from pkg.constants.constants import MILVUS_COLLECTION_NAME
 from log import logger
 
 
@@ -22,7 +23,7 @@ class DocumentService:
     def __init__(self):
         self.upload_dir = Path("uploads")
         self.upload_dir.mkdir(exist_ok=True)
-        self.collection_name = config.get('milvus.collection_name', 'documents')
+        self.collection_name = MILVUS_COLLECTION_NAME
     
     async def upload_document(self, file: UploadFile):
         """
@@ -42,27 +43,41 @@ class DocumentService:
             file_path = self.upload_dir / new_filename
             
             # 2. 保存文件
-            content = await file.read()
+            file_content = await file.read()
             with open(file_path, "wb") as f:
-                f.write(content)
+                f.write(file_content)
             
-            file_size = len(content)
+            file_size = len(file_content)
             logger.info(f"文件已保存: {file.filename} → {file_path}, 大小: {file_size} bytes")
             
-            # 3. 保存文档信息到 MongoDB
+            # 3. 解析文档内容
+            from pkg.utils.document_utils import load_document
+            
+            try:
+                loaded_docs = load_document(str(file_path))
+                parsed_content = "\n\n".join([doc["content"] for doc in loaded_docs])
+                page_count = len(loaded_docs)
+                logger.info(f"文档内容已解析: {file.filename}, 页数: {page_count}, 内容长度: {len(parsed_content)}")
+            except Exception as e:
+                logger.warning(f"文档内容解析失败: {e}, 将使用空内容")
+                parsed_content = ""
+                page_count = 0
+            
+            # 4. 保存文档信息到 MongoDB（初始状态：未处理）
             doc_model = DocumentModel(
                 uuid=file_uuid,
                 name=file.filename,
-                content="",  # 内容将在后台处理时填充
-                page=0,
+                content=parsed_content,  # 存储解析后的文本内容
+                page=page_count,
                 url=f"/uploads/{new_filename}",
-                size=file_size
+                size=file_size,
+                status=0  # 0.未处理
             )
             await doc_model.insert()
             
-            logger.info(f"文档已保存到 MongoDB: {file_uuid}")
+            logger.info(f"文档已保存到 MongoDB: {file_uuid}, 状态: 未处理")
             
-            # 4. 提交到 Kafka 异步处理（Embedding）
+            # 5. 提交到 Kafka 异步处理（Embedding）
             task = {
                 "task_type": "file",
                 "file_path": str(file_path),
@@ -77,19 +92,35 @@ class DocumentService:
             
             if not submit_success:
                 logger.error(f"任务提交失败: {file_uuid}")
+                # 更新状态为处理失败
+                doc_model.status = 3  # 3.处理失败
+                await doc_model.save()
+                logger.info(f"文档状态已更新: {file_uuid} -> 处理失败")
+                
                 data = {
                     "uuid": file_uuid,
                     "name": file.filename,
-                    "status": "failed"
+                    "status": 3,
+                    "status_text": "处理失败"
                 }
                 return "文档保存成功，但处理任务提交失败", -1, data
             
+            # 更新状态为处理中
+            doc_model.status = 1  # 1.处理中
+            await doc_model.save()
+            logger.info(f"文档状态已更新: {file_uuid} -> 处理中")
             logger.info(f"文档处理任务已提交: {file_uuid}")
             
             data = {
                 "uuid": file_uuid,
                 "name": file.filename,
-                "status": "processing",
+                "size": file_size,
+                "page": page_count,
+                "url": f"/uploads/{new_filename}",
+                "content": parsed_content[:500] + "..." if len(parsed_content) > 500 else parsed_content,  # 返回前500字符
+                "content_length": len(parsed_content),
+                "status": 1,
+                "status_text": "处理中",
                 "message": "文档已提交处理，后台正在进行 Embedding"
             }
             return "上传成功", 0, data
@@ -118,12 +149,24 @@ class DocumentService:
             # 2. 从 Milvus 获取 chunk_count
             chunk_count = await self._get_chunk_count_from_milvus(document_uuid)
             
+            # 3. 状态文本映射
+            status_text_map = {
+                0: "未处理",
+                1: "处理中",
+                2: "处理完成",
+                3: "处理失败"
+            }
+            
             data = {
                 "uuid": doc.uuid,
                 "name": doc.name,
                 "size": doc.size,
                 "page": doc.page,
                 "url": doc.url,
+                "content": doc.content,  # 返回完整内容
+                "content_length": len(doc.content) if doc.content else 0,
+                "status": doc.status,
+                "status_text": status_text_map.get(doc.status, "未知"),
                 "uploaded_at": doc.create_at.isoformat() if doc.create_at else None,
                 "chunk_count": chunk_count
             }
@@ -201,12 +244,21 @@ class DocumentService:
                 docs = await DocumentModel.find_all().skip(skip).limit(page_size).to_list()
             
             # 2. 为每个文档获取 chunk_count（从 Milvus）
+            status_text_map = {
+                0: "未处理",
+                1: "处理中",
+                2: "处理完成",
+                3: "处理失败"
+            }
+            
             document_list = []
             for doc in docs:
                 chunk_count = await self._get_chunk_count_from_milvus(doc.uuid)
                 document_list.append({
                     "uuid": doc.uuid,
                     "name": doc.name,
+                    "status": doc.status,
+                    "status_text": status_text_map.get(doc.status, "未知"),
                     "uploaded_at": doc.create_at.isoformat() if doc.create_at else None,
                     "chunk_count": chunk_count
                 })
@@ -254,6 +306,128 @@ class DocumentService:
         except Exception as e:
             logger.warning(f"从 Milvus 查询 chunk_count 失败: {e}")
             return 0
+    
+    async def update_document_status(
+        self, 
+        document_uuid: str, 
+        status: int,
+        page: Optional[int] = None,
+        content: Optional[str] = None
+    ):
+        """
+        更新文档状态（异步版本，供 API 层使用）
+        
+        Args:
+            document_uuid: 文档UUID
+            status: 状态码（0.未处理，1.处理中，2.处理完成，3.处理失败）
+            page: 文档页数（可选）
+            content: 文档内容（可选）
+            
+        Returns:
+            tuple: (message, ret) - message: 提示信息, ret: 返回码
+        """
+        try:
+            # 1. 查询文档
+            doc = await DocumentModel.find_one(DocumentModel.uuid == document_uuid)
+            
+            if not doc:
+                return "文档不存在", -2
+            
+            # 2. 更新状态
+            status_text_map = {
+                0: "未处理",
+                1: "处理中",
+                2: "处理完成",
+                3: "处理失败"
+            }
+            
+            doc.status = status
+            if page is not None:
+                doc.page = page
+            if content is not None:
+                doc.content = content
+            
+            await doc.save()
+            
+            status_text = status_text_map.get(status, "未知")
+            logger.info(f"文档状态已更新: {document_uuid} -> {status_text}")
+            
+            return f"状态更新成功: {status_text}", 0
+            
+        except Exception as e:
+            logger.error(f"更新文档状态失败: {e}", exc_info=True)
+            return f"更新失败: {str(e)}", -1
+    
+    def update_document_status_sync(
+        self, 
+        document_uuid: str, 
+        status: int,
+        page: Optional[int] = None,
+        content: Optional[str] = None
+    ):
+        """
+        更新文档状态（同步版本，供 Kafka 消费者使用）
+        使用 pymongo 直接操作，避免事件循环冲突
+        
+        Args:
+            document_uuid: 文档UUID
+            status: 状态码（0.未处理，1.处理中，2.处理完成，3.处理失败）
+            page: 文档页数（可选）
+            content: 文档内容（可选）
+            
+        Returns:
+            tuple: (message, ret) - message: 提示信息, ret: 返回码
+        """
+        try:
+            from pymongo import MongoClient
+            from pkg.constants.constants import MONGODB_URL, MONGODB_DATABASE
+            
+            # 使用同步的 pymongo 客户端
+            client = MongoClient(MONGODB_URL)
+            db = client[MONGODB_DATABASE]
+            collection = db['documents']
+            
+            # 查询文档
+            doc = collection.find_one({"uuid": document_uuid})
+            
+            if not doc:
+                client.close()
+                return "文档不存在", -2
+            
+            # 准备更新数据
+            update_data = {"status": status}
+            if page is not None:
+                update_data["page"] = page
+            if content is not None:
+                update_data["content"] = content
+            
+            # 更新文档
+            result = collection.update_one(
+                {"uuid": document_uuid},
+                {"$set": update_data}
+            )
+            
+            client.close()
+            
+            status_text_map = {
+                0: "未处理",
+                1: "处理中",
+                2: "处理完成",
+                3: "处理失败"
+            }
+            
+            status_text = status_text_map.get(status, "未知")
+            
+            if result.modified_count > 0:
+                logger.info(f"文档状态已更新（同步）: {document_uuid} -> {status_text}")
+                return f"状态更新成功: {status_text}", 0
+            else:
+                logger.warning(f"文档状态未变化: {document_uuid} -> {status_text}")
+                return f"文档状态未变化", 0
+            
+        except Exception as e:
+            logger.error(f"更新文档状态失败（同步）: {e}", exc_info=True)
+            return f"更新失败: {str(e)}", -1
     
     def _delete_from_milvus(self, document_uuid: str) -> int:
         """

@@ -86,7 +86,7 @@ class ReActAgent:
             tool_input: 工具输入（格式: "query|||top_k"）
             
         Returns:
-            工具执行结果
+            工具执行结果（字符串形式的 Observation）
         """
         if tool_name not in self.tools:
             return f"错误: 未知工具 '{tool_name}'"
@@ -100,7 +100,11 @@ class ReActAgent:
             # 执行工具
             result = self.tools[tool_name](query=query, top_k=top_k)
             
-            # 格式化结果
+            # 🔥 通过回调发送完整的工具结果（包含 documents 等元信息）
+            if self.callback and isinstance(result, dict):
+                self.callback("tool_result", result)
+            
+            # 格式化结果为 Observation 字符串
             if isinstance(result, dict):
                 if result.get("success"):
                     context = result.get("context", "")
@@ -242,6 +246,10 @@ Answer: [你的答案]"""
                 print(f"   Top-K: {tool_input.split('|||')[1] if len(tool_input.split('|||')) > 1 else 5}")
             
             observation = self._execute_tool(tool_name, tool_input)
+            
+            # 🔥 通过回调发送 Observation 事件
+            if self.callback:
+                self.callback("observation", observation)
             
             # 记录已执行的 Action 和标记已有 Observation
             last_action = current_action

@@ -23,6 +23,60 @@ SUPPORTED_LOADERS = {
 }
 
 
+def parse_document_content(file_bytes: bytes, filename: str) -> str:
+    """
+    解析文档内容（从字节流）
+    
+    Args:
+        file_bytes: 文件字节流
+        filename: 文件名（用于确定类型）
+        
+    Returns:
+        str: 解析后的文档文本内容
+    """
+    import tempfile
+    import os
+    
+    try:
+        # 获取文件扩展名
+        extension = Path(filename).suffix.lower()
+        
+        if extension not in SUPPORTED_LOADERS:
+            raise ValueError(
+                f"不支持的文件类型: {extension}. "
+                f"支持的类型: {list(SUPPORTED_LOADERS.keys())}"
+            )
+        
+        # 创建临时文件
+        with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as tmp_file:
+            tmp_file.write(file_bytes)
+            tmp_path = tmp_file.name
+        
+        try:
+            # 选择对应的加载器
+            loader_class = SUPPORTED_LOADERS[extension]
+            loader = loader_class(tmp_path)
+            
+            # 加载文档
+            documents = loader.load()
+            
+            # 合并所有页面内容
+            content = "\n\n".join([doc.page_content for doc in documents])
+            
+            logger.info(f"✓ 文档解析成功: {filename}, 页数: {len(documents)}, 内容长度: {len(content)}")
+            
+            return content
+            
+        finally:
+            # 删除临时文件
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        
+    except Exception as e:
+        logger.error(f"✗ 文档解析失败: {e}", exc_info=True)
+        raise
+
+
 def load_document(file_path: str) -> List[Dict[str, Any]]:
     """
     加载文档

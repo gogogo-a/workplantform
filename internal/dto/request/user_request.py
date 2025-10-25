@@ -39,3 +39,9 @@ class UpdateUserInfoRequest(BaseModel):
 class SendEmailCodeRequest(BaseModel):
     """发送邮箱验证码请求 - POST /users/email-code"""
     email: EmailStr = Field(..., description="邮箱")
+
+
+class SetAdminRequest(BaseModel):
+    """设置管理员请求 - PATCH /users/set-admin"""
+    user_id: str = Field(..., description="用户UUID")
+    is_admin: bool = Field(..., description="是否为管理员，true:设置为管理员，false:取消管理员")

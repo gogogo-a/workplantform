@@ -4,6 +4,7 @@ FastAPI 应用工厂
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .routes import setup_routes
+from pkg.middleware.auth import JWTAuthMiddleware
 from log import logger
 
 
@@ -28,9 +29,14 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=["*"],  # 生产环境应该指定具体域名
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Origin", "Content-Length", "Content-Type", "Authorization"],
+        allow_methods=["*"],  # 允许所有 HTTP 方法
+        allow_headers=["*"],  # 允许所有请求头
     )
+    
+    # ==================== JWT 认证中间件 ====================
+    # 全局应用JWT认证，白名单路径除外
+    app.add_middleware(JWTAuthMiddleware)
+    logger.info("✓ JWT 认证中间件已全局应用")
     
     # ==================== 注册路由 ====================
     setup_routes(app)

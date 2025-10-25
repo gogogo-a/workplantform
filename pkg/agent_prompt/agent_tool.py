@@ -53,6 +53,7 @@ def knowledge_search(query: str, top_k: int = 5, use_reranker: bool = True) -> D
             - results: 搜索结果列表
             - context: 格式化的上下文文本
             - count: 结果数量
+            - documents: 文档元信息列表（uuid, name）
     """
     try:
         # 延迟导入，避免循环依赖
@@ -74,6 +75,7 @@ def knowledge_search(query: str, top_k: int = 5, use_reranker: bool = True) -> D
                 "results": [],
                 "context": "",
                 "count": 0,
+                "documents": [],
                 "message": "知识库中未找到相关信息"
             }
         
@@ -85,7 +87,25 @@ def knowledge_search(query: str, top_k: int = 5, use_reranker: bool = True) -> D
             use_reranker=use_reranker
         )
         
+        # 🔥 提取文档元信息（去重后的）
+        documents_info = []
+        seen_docs = set()  # 用于去重
+        
+        for result in search_results:
+            metadata = result.get("metadata", {})
+            doc_uuid = metadata.get("document_uuid", "")
+            doc_name = metadata.get("filename", "未知文档")
+            
+            # 基于 document_uuid 去重
+            if doc_uuid and doc_uuid not in seen_docs:
+                seen_docs.add(doc_uuid)
+                documents_info.append({
+                    "uuid": doc_uuid,
+                    "name": doc_name
+                })
+        
         print(f"[工具] 找到 {len(search_results)} 个相关文档片段")
+        print(f"[工具] 涉及 {len(documents_info)} 个不同文档")
         print(f"[工具] 上下文长度: {len(context)} 字符")
         
         return {
@@ -93,6 +113,7 @@ def knowledge_search(query: str, top_k: int = 5, use_reranker: bool = True) -> D
             "results": search_results,
             "context": context,
             "count": len(search_results),
+            "documents": documents_info,  # 新增：文档元信息列表
             "message": f"成功检索到 {len(search_results)} 个相关文档片段"
         }
         
@@ -103,6 +124,7 @@ def knowledge_search(query: str, top_k: int = 5, use_reranker: bool = True) -> D
             "results": [],
             "context": "",
             "count": 0,
+            "documents": [],
             "message": f"搜索失败: {str(e)}"
         }
 
