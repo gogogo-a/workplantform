@@ -31,7 +31,7 @@ export const useUserStore = defineStore('user', {
     isAdmin: (state) => state.userInfo.is_admin || false,
     
     // 用户 ID
-    userId: (state) => state.userInfo.id || '',
+    userId: (state) => state.userInfo.uuid || state.userInfo.id || '',
     
     // 用户昵称
     nickname: (state) => state.userInfo.nickname || '游客'

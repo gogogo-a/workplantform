@@ -23,6 +23,16 @@
           <el-icon><Document /></el-icon>
           <span>文档管理</span>
         </el-menu-item>
+
+        <el-menu-item index="/admin/monitor">
+          <el-icon><Monitor /></el-icon>
+          <span>系统监控</span>
+        </el-menu-item>
+
+        <el-menu-item index="/admin/logs">
+          <el-icon><DocumentCopy /></el-icon>
+          <span>错误日志</span>
+        </el-menu-item>
       </el-menu>
     </aside>
 
@@ -38,7 +48,7 @@
 </template>
 
 <script setup>
-import { User, Document } from '@element-plus/icons-vue'
+import { User, Document, Monitor, DocumentCopy } from '@element-plus/icons-vue'
 </script>
 
 <style scoped>

@@ -8,6 +8,8 @@ from api.v1.user_info_controller import router as user_router
 from api.v1.document_controller import router as document_router
 from api.v1.session_controller import router as session_router
 from api.v1.message_controller import router as message_router
+from api.v1.log_controller import router as log_router
+from api.v1.monitor_controller import router as monitor_router
 from log import logger
 
 
@@ -36,8 +38,11 @@ def setup_routes(app: FastAPI):
     # ==================== 消息相关路由 ====================
     app.include_router(message_router)
     
-    # 可以继续添加其他路由
-    # app.include_router(chat_router)
+    # ==================== 日志查询路由 ====================
+    app.include_router(log_router)
+    
+    # ==================== 监控查询路由 ====================
+    app.include_router(monitor_router)
     
     logger.info("✓ 路由注册完成")
     

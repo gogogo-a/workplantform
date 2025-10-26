@@ -29,7 +29,7 @@ DEEPSEEK_CHAT = LLMModelConfig(
     model_type="cloud",
     temperature=0.3,
     max_tokens=4096,
-    timeout=60
+    timeout=30  # 🔥 调整为 30 秒，避免长时间等待
 )
 
 

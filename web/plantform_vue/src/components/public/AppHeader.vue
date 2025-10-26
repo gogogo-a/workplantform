@@ -126,13 +126,14 @@
 <script setup>
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { useUserStore } from '@/store'
+import { useUserStore, useChatStore } from '@/store'
 import { updateUserInfo } from '@/api'
 import { ElMessage } from 'element-plus'
 import { User, ArrowDown, SwitchButton, ChatDotRound, Setting } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const userStore = useUserStore()
+const chatStore = useChatStore()
 
 const profileDialogVisible = ref(false)
 const updating = ref(false)
@@ -156,7 +157,10 @@ const profileRules = {
 const handleCommand = (command) => {
   console.log('handleCommand called with:', command)
   if (command === 'logout') {
+    // 清除用户数据
     userStore.logout()
+    // 清除聊天数据
+    chatStore.clearAll()
     ElMessage.success('已退出登录')
     router.push('/login')
   } else if (command === 'profile') {

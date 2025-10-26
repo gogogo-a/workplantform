@@ -61,7 +61,7 @@ def knowledge_search(query: str, top_k: int = 5, use_reranker: bool = True) -> D
         
         print(f"[工具] 知识库搜索: {query} (Top {top_k})")
         
-        # 执行 RAG 检索
+        # 执行 RAG 检索（只调用一次）
         search_results = rag_service.search(
             query=query,
             top_k=top_k,
@@ -79,13 +79,32 @@ def knowledge_search(query: str, top_k: int = 5, use_reranker: bool = True) -> D
                 "message": "知识库中未找到相关信息"
             }
         
-        # 构建上下文（增加长度限制，确保返回完整内容）
-        context = rag_service.get_context_for_query(
-            query=query,
-            top_k=top_k,
-            max_context_length=10000,  # 增加到 10000 字符，确保完整内容
-            use_reranker=use_reranker
-        )
+        # 🔥 手动构建上下文，避免重复调用 search()
+        context_parts = []
+        current_length = 0
+        max_context_length = 10000
+        
+        for i, result in enumerate(search_results, 1):
+            text = result["text"]
+            source = result["metadata"].get("filename", "未知来源")
+            
+            # 添加分数信息
+            score_info = ""
+            if "rerank_score" in result:
+                score_info = f" (Rerank分数: {result['rerank_score']:.4f})"
+            
+            # 格式化引用
+            part = f"[文档{i} - {source}{score_info}]\n{text}\n"
+            part_length = len(part)
+            
+            # 检查长度限制
+            if current_length + part_length > max_context_length:
+                break
+            
+            context_parts.append(part)
+            current_length += part_length
+        
+        context = "\n".join(context_parts)
         
         # 🔥 提取文档元信息（去重后的）
         documents_info = []

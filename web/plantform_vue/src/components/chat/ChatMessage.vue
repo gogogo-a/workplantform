@@ -233,7 +233,8 @@ const fileContent = computed(() => {
 
 // 点击文档跳转到详情页
 const handleDocumentClick = (uuid) => {
-  router.push(`/admin/documents/${uuid}`)
+  // 所有用户都跳转到 /documents/:id，组件内部会根据角色显示不同内容
+  router.push(`/documents/${uuid}`)
 }
 
 // 格式化时间

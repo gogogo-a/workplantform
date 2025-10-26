@@ -55,12 +55,29 @@ class Logger:
         
         # ==================== 控制台输出配置 ====================
         # 彩色、易读的格式（开发调试用）
+        # 格式: 文件路径:行号 (可点击跳转)
+        # 
+        # 可选格式：
+        # 1. {name}:{line} - 模块名（简洁，但可能不够精确）
+        # 2. {file.path}:{line} - 绝对路径（精确，但路径长）
+        # 3. 使用自定义 extra 字段显示项目相对路径（推荐）
+        
+        # 🔥 方案1: 使用完整路径（最可靠，所有 IDE 都支持）
         console_format = (
             "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
             "<level>{level: <8}</level> | "
-            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
+            "<cyan>{file.path}:{line}</cyan> | "
+            "<cyan>{function}</cyan> | "
             "<level>{message}</level>"
         )
+        
+        # 🔥 备选方案2: 使用相对路径（更简洁，但需要 IDE 工作目录正确）
+        # console_format = (
+        #     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+        #     "<level>{level: <8}</level> | "
+        #     "<cyan>{name}.{function}:{line}</cyan> | "
+        #     "<level>{message}</level>"
+        # )
         
         _logger.add(
             sys.stderr,
@@ -120,32 +137,46 @@ class Logger:
     
     def debug(self, msg: str, **kwargs):
         """Debug 级别 - 开发调试"""
-        self._logger.bind(**kwargs).debug(msg)
+        # 🔥 使用 opt(depth=1) 让 loguru 回溯到真实调用位置
+        self._logger.opt(depth=1).bind(**kwargs).debug(msg)
     
     def info(self, msg: str, **kwargs):
         """Info 级别 - 普通信息"""
-        self._logger.bind(**kwargs).info(msg)
+        # 🔥 使用 opt(depth=1) 让 loguru 回溯到真实调用位置
+        self._logger.opt(depth=1).bind(**kwargs).info(msg)
     
     def warning(self, msg: str, **kwargs):
         """Warning 级别 - 警告（非致命）"""
-        self._logger.bind(**kwargs).warning(msg)
+        # 🔥 使用 opt(depth=1) 让 loguru 回溯到真实调用位置
+        self._logger.opt(depth=1).bind(**kwargs).warning(msg)
     
     def warn(self, msg: str, **kwargs):
         """warning 的别名"""
-        self.warning(msg, **kwargs)
+        # 🔥 使用 opt(depth=2) 因为经过了 warning 方法
+        self._logger.opt(depth=2).bind(**kwargs).warning(msg)
     
-    def error(self, msg: str, **kwargs):
-        """Error 级别 - 错误（业务/系统）"""
-        self._logger.bind(**kwargs).error(msg)
+    def error(self, msg: str, exc_info: bool = False, **kwargs):
+        """
+        Error 级别 - 错误（业务/系统）
+        
+        Args:
+            msg: 错误消息
+            exc_info: 是否包含异常堆栈信息（True 会自动捕获当前异常）
+            **kwargs: 额外的上下文信息
+        """
+        # 🔥 使用 opt(depth=1) 让 loguru 回溯到真实调用位置
+        self._logger.opt(depth=1).bind(**kwargs).error(msg)
     
     def fatal(self, msg: str, **kwargs):
         """Fatal 级别 - 致命错误（会退出程序）"""
-        self._logger.bind(**kwargs).critical(msg)
+        # 🔥 使用 opt(depth=1) 让 loguru 回溯到真实调用位置
+        self._logger.opt(depth=1).bind(**kwargs).critical(msg)
         sys.exit(1)
     
     def critical(self, msg: str, **kwargs):
         """Critical 级别 - 严重错误（不退出程序）"""
-        self._logger.bind(**kwargs).critical(msg)
+        # 🔥 使用 opt(depth=1) 让 loguru 回溯到真实调用位置
+        self._logger.opt(depth=1).bind(**kwargs).critical(msg)
     
     def exception(self, msg: str, **kwargs):
         """
@@ -157,7 +188,8 @@ class Logger:
             except Exception as e:
                 logger.exception("操作失败", operation="risky_operation")
         """
-        self._logger.bind(**kwargs).exception(msg)
+        # 🔥 使用 opt(depth=1) 让 loguru 回溯到真实调用位置
+        self._logger.opt(depth=1).bind(**kwargs).exception(msg)
     
     def with_context(self, **kwargs):
         """
@@ -183,42 +215,51 @@ logger = Logger()
 # ==================== 便捷函数（可选）====================
 def debug(msg: str, **kwargs):
     """快捷函数：Debug 日志"""
-    logger.debug(msg, **kwargs)
+    # 🔥 使用 opt(depth=2) 因为经过了便捷函数 -> Logger.debug
+    logger._logger.opt(depth=2).bind(**kwargs).debug(msg)
 
 
 def info(msg: str, **kwargs):
     """快捷函数：Info 日志"""
-    logger.info(msg, **kwargs)
+    # 🔥 使用 opt(depth=2) 因为经过了便捷函数 -> Logger.info
+    logger._logger.opt(depth=2).bind(**kwargs).info(msg)
 
 
 def warning(msg: str, **kwargs):
     """快捷函数：Warning 日志"""
-    logger.warning(msg, **kwargs)
+    # 🔥 使用 opt(depth=2) 因为经过了便捷函数 -> Logger.warning
+    logger._logger.opt(depth=2).bind(**kwargs).warning(msg)
 
 
 def warn(msg: str, **kwargs):
     """快捷函数：Warn 日志"""
-    logger.warn(msg, **kwargs)
+    # 🔥 使用 opt(depth=2) 因为经过了便捷函数 -> Logger.warn
+    logger._logger.opt(depth=2).bind(**kwargs).warning(msg)
 
 
 def error(msg: str, **kwargs):
     """快捷函数：Error 日志"""
-    logger.error(msg, **kwargs)
+    # 🔥 使用 opt(depth=2) 因为经过了便捷函数 -> Logger.error
+    logger._logger.opt(depth=2).bind(**kwargs).error(msg)
 
 
 def fatal(msg: str, **kwargs):
     """快捷函数：Fatal 日志（会退出程序）"""
-    logger.fatal(msg, **kwargs)
+    # 🔥 使用 opt(depth=2) 因为经过了便捷函数 -> Logger.fatal
+    logger._logger.opt(depth=2).bind(**kwargs).critical(msg)
+    sys.exit(1)
 
 
 def critical(msg: str, **kwargs):
     """快捷函数：Critical 日志"""
-    logger.critical(msg, **kwargs)
+    # 🔥 使用 opt(depth=2) 因为经过了便捷函数 -> Logger.critical
+    logger._logger.opt(depth=2).bind(**kwargs).critical(msg)
 
 
 def exception(msg: str, **kwargs):
     """快捷函数：Exception 日志"""
-    logger.exception(msg, **kwargs)
+    # 🔥 使用 opt(depth=2) 因为经过了便捷函数 -> Logger.exception
+    logger._logger.opt(depth=2).bind(**kwargs).exception(msg)
 
 
 # ==================== 示例用法 ====================

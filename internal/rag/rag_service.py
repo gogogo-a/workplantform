@@ -12,12 +12,14 @@ RAG 服务
 """
 from typing import List, Dict, Any, Optional
 import logging
+import time
 
 from internal.embedding.embedding_service import embedding_service
 from internal.db.milvus import milvus_client
 from internal.reranker.reranker_service import reranker_service
 from pkg.model_list import BGE_LARGE_ZH_V1_5, BGE_RERANKER_V2_M3  # 默认模型配置
 from pkg.constants.constants import MILVUS_COLLECTION_NAME
+from internal.monitor import performance_monitor, record_performance
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +174,7 @@ class RAGService:
             logger.error(f"✗ RAG 检索服务初始化失败: {e}")
             raise
     
+    @performance_monitor('milvus_search', operation_name='向量检索+Rerank', include_args=True, include_result=True)
     def search(
         self,
         query: str,
@@ -213,10 +216,21 @@ class RAGService:
             
             logger.info(f"搜索查询: {query[:50]}...")
             
-            # 1. 向量化查询
+            # 1. 向量化查询（手动记录 embedding 性能）
+            embedding_start = time.time()
             query_embedding = self.embedder.encode_query(
                 query=query,
                 normalize=True
+            )
+            embedding_duration = time.time() - embedding_start
+            
+            # 记录 embedding 性能（自动计算 token 数量和 ms/10k tokens）
+            record_performance(
+                monitor_type='embedding',
+                operation='查询向量化',
+                duration=embedding_duration,
+                query_length=len(query),
+                text=query  # 用于自动计算 token 数量
             )
             
             # 2. 向量检索（如果使用 Reranker，检索更多候选）

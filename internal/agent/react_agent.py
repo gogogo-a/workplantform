@@ -5,6 +5,7 @@ ReAct Agent 实现
 import re
 from typing import Dict, List, Callable, Any, Optional, Tuple
 import logging
+from internal.monitor import performance_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,7 @@ class ReActAgent:
             logger.error(f"工具执行失败: {e}")
             return f"工具执行失败: {str(e)}"
     
+    @performance_monitor('agent_total', operation_name='Agent完整推理', include_args=True, include_result=False)
     def run(self, question: str, stream: bool = False) -> str:
         """
         运行 ReAct Agent

@@ -88,10 +88,11 @@ class ModelManager:
                 openai_api_key=DEEPSEEK_API_KEY,
                 openai_api_base=DEEPSEEK_BASE_URL,
                 temperature=config.temperature,
-                max_tokens=config.max_tokens
+                max_tokens=config.max_tokens,
+                request_timeout=config.timeout  # 🔥 添加超时设置（LangChain 使用 request_timeout）
             )
-            logger.info(f"✓ 已选择云端模型: {model_name} (type: {config.model_type})")
-            print(f"✓ 已选择云端模型: {model_name} (type: {config.model_type})")
+            logger.info(f"✓ 已选择云端模型: {model_name} (type: {config.model_type}, timeout: {config.timeout}s)")
+            print(f"✓ 已选择云端模型: {model_name} (type: {config.model_type}, timeout: {config.timeout}s)")
             return llm
             
         else:

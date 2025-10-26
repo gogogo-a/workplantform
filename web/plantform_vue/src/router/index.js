@@ -29,6 +29,12 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
+    path: '/documents/:id',
+    name: 'DocumentDetail',
+    component: () => import('@/views/admin/DocumentDetail.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
     path: '/admin',
     name: 'Admin',
     redirect: '/admin/users',
@@ -51,6 +57,18 @@ const routes = [
         path: 'documents/:id',
         name: 'AdminDocumentDetail',
         component: () => import('@/views/admin/DocumentDetail.vue'),
+        meta: { requiresAuth: true, requiresAdmin: true }
+      },
+      {
+        path: 'monitor',
+        name: 'AdminMonitor',
+        component: () => import('@/views/admin/MonitorManagement.vue'),
+        meta: { requiresAuth: true, requiresAdmin: true }
+      },
+      {
+        path: 'logs',
+        name: 'AdminLogs',
+        component: () => import('@/views/admin/LogManagement.vue'),
         meta: { requiresAuth: true, requiresAdmin: true }
       }
     ]

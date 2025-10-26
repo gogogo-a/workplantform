@@ -16,6 +16,7 @@ from pkg.model_list import (
     ModelManager,
     BGE_LARGE_ZH_V1_5  # 默认模型配置
 )
+from internal.monitor import performance_monitor
 
 logger = logging.getLogger(__name__)
 

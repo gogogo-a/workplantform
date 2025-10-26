@@ -337,8 +337,16 @@ watch(
 )
 
 onMounted(async () => {
-  // 进入页面时立即获取会话列表
-  await chatStore.fetchSessionList(userStore.userId)
+  console.log('ChatView mounted, userId:', userStore.userId)
+  
+  // 确保有 userId 才获取会话列表
+  if (userStore.userId) {
+    // 进入页面时立即获取会话列表
+    await chatStore.fetchSessionList(userStore.userId)
+    console.log('会话列表已加载，数量:', chatStore.sessionList.length)
+  } else {
+    console.warn('userId 不存在，无法获取会话列表')
+  }
   
   // 清空当前会话，准备创建新会话
   chatStore.currentSessionId = ''
@@ -348,8 +356,15 @@ onMounted(async () => {
 })
 
 // 组件激活时（从其他页面返回）
-onActivated(() => {
+onActivated(async () => {
   console.log('ChatView activated: 恢复滚动位置', savedScrollPosition.value)
+  
+  // 如果会话列表为空且有 userId，重新获取会话列表
+  if (chatStore.sessionList.length === 0 && userStore.userId) {
+    console.log('会话列表为空，重新获取...')
+    await chatStore.fetchSessionList(userStore.userId)
+  }
+  
   // 恢复滚动位置
   nextTick(() => {
     if (messagesContainer.value && savedScrollPosition.value > 0) {
@@ -366,6 +381,18 @@ onDeactivated(() => {
     console.log('ChatView deactivated: 保存滚动位置', savedScrollPosition.value)
   }
 })
+
+// 监听 userId 变化，当登录后 userId 从空变为有值时，自动获取会话列表
+watch(
+  () => userStore.userId,
+  async (newUserId, oldUserId) => {
+    console.log('userId 变化:', oldUserId, '->', newUserId)
+    if (newUserId && !oldUserId && chatStore.sessionList.length === 0) {
+      console.log('检测到登录，获取会话列表...')
+      await chatStore.fetchSessionList(newUserId)
+    }
+  }
+)
 </script>
 
 <style scoped>

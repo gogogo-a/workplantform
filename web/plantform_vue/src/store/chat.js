@@ -168,6 +168,17 @@ export const useChatStore = defineStore('chat', {
      */
     toggleShowThinking() {
       this.showThinking = !this.showThinking
+    },
+
+    /**
+     * 清除所有聊天数据（用户登出时调用）
+     */
+    clearAll() {
+      this.sessionList = []
+      this.currentSessionId = ''
+      this.currentMessages = []
+      this.loading = false
+      console.log('聊天数据已清除')
     }
   }
 })

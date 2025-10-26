@@ -230,6 +230,7 @@ onMounted(() => {
   flex-direction: column;
   height: 100%;
   padding: 24px;
+  padding-bottom: 80px; /* 增加底部间距，避免被导航栏遮挡 */
   overflow: hidden;
 }
 

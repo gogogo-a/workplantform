@@ -47,6 +47,9 @@ env/
 *.log
 json_log/
 
+# 性能监控数据
+json_monitor/
+
 # 数据库
 *.db
 *.sqlite

@@ -6,6 +6,7 @@
 from typing import Tuple, Optional, Dict, Any, List, AsyncGenerator
 from datetime import datetime
 import uuid as uuid_module
+import time
 
 from internal.model.message import MessageModel
 from internal.model.session import SessionModel
@@ -18,6 +19,7 @@ from pkg.agent_prompt.prompt_templates import AGENT_RAG_PROMPT
 from pkg.agent_prompt.agent_tool import knowledge_search
 from log import logger
 from pkg.constants.constants import MILVUS_COLLECTION_NAME, SUMMARY_MESSAGE_THRESHOLD
+from internal.monitor import record_performance
 
 class MessageService:
     """消息管理服务（单例模式）"""
@@ -687,10 +689,14 @@ class MessageService:
         try:
             logger.info(f"开始自动生成会话名称: session={session_id}")
             
-            # 使用 LLM 生成简短标题
-            from pkg.model_list import ModelManager
+            # 使用 LLMService 生成简短标题
+            from internal.llm.llm_service import LLMService
             
-            llm = ModelManager.select_llm_model(DEEPSEEK_CHAT.name, DEEPSEEK_CHAT.model_type)
+            llm_service = LLMService(
+                model_name=DEEPSEEK_CHAT.name,
+                model_type=DEEPSEEK_CHAT.model_type,
+                auto_summary=False
+            )
             
             # 提示词：要求生成8-15字的简短标题
             prompt = f"""请根据以下对话，生成一个简短的会话标题（8-15个字）。
@@ -702,7 +708,7 @@ AI回答：{ai_answer[:200]}...
 标题："""
             
             # 调用 LLM 生成标题
-            response = llm.chat(prompt, stream=False)
+            response = llm_service.chat(user_message=prompt, stream=False, use_history=False)
             title = response.strip().strip('"').strip("'")
             
             # 限制长度
@@ -811,6 +817,12 @@ AI回答：{ai_answer[:200]}...
                 "documents": []
             }
             
+            # ⏱️ 性能监控：记录各阶段时间
+            llm_total_start = time.time()
+            current_thought_start = None
+            current_action_start = None
+            answer_start = None
+            
             # 🔥 如果有文件上传，使用 enhanced_content（包含文件内容），否则使用原始 content
             ai_input_content = enhanced_content if enhanced_content else content
             logger.info(f"发送给 AI 的内容长度: {len(ai_input_content)}, 原始问题长度: {len(content)}")
@@ -822,20 +834,49 @@ AI回答：{ai_answer[:200]}...
                 
                 # 根据 show_thinking 参数决定是否输出思考过程，同时收集到 extra_data
                 if event_type == "thought":
+                    # ⏱️ 记录 thought 开始时间
+                    if current_thought_start is None:
+                        current_thought_start = time.time()
+                    
                     extra_data["thoughts"].append(event_content)
                     if show_thinking:  # 只有启用时才输出
                         yield event_dict
+                        
                 elif event_type == "action":
+                    # ⏱️ thought 结束，记录时间
+                    if current_thought_start is not None:
+                        think_duration = time.time() - current_thought_start
+                        record_performance('llm_think', f'思考步骤{len(extra_data["thoughts"])}', think_duration, 
+                                         thought_content=extra_data["thoughts"][-1][:100] if extra_data["thoughts"] else "")
+                        current_thought_start = None
+                    
+                    # ⏱️ 记录 action 开始时间
+                    current_action_start = time.time()
+                    
                     extra_data["actions"].append(event_content)
                     if show_thinking:  # 只有启用时才输出
                         yield event_dict
+                        
                 elif event_type == "observation":
+                    # ⏱️ action 结束（包含工具执行），记录时间
+                    if current_action_start is not None:
+                        action_duration = time.time() - current_action_start
+                        record_performance('llm_action', f'动作步骤{len(extra_data["actions"])}', action_duration,
+                                         action_content=extra_data["actions"][-1][:100] if extra_data["actions"] else "")
+                        current_action_start = None
+                    
                     extra_data["observations"].append(event_content)
                     if show_thinking:  # 只有启用时才输出
                         yield event_dict
+                        
                 elif event_type == "answer_chunk":
+                    # ⏱️ 开始生成答案，记录开始时间
+                    if answer_start is None:
+                        answer_start = time.time()
+                    
                     ai_reply_full += event_content
                     yield event_dict
+                    
                 elif event_type == "documents":
                     # 🔥 收集文档信息到 extra_data（始终收集）
                     extra_data["documents"] = event_data.get("documents", [])
@@ -846,6 +887,21 @@ AI回答：{ai_answer[:200]}...
                         yield event_dict
                 elif event_type == "error":
                     yield event_dict
+            
+            # ⏱️ 答案生成结束，记录时间
+            if answer_start is not None:
+                answer_duration = time.time() - answer_start
+                record_performance('llm_answer', '生成最终答案', answer_duration,
+                                 answer_length=len(ai_reply_full))
+            
+            # ⏱️ LLM 总时间
+            llm_total_duration = time.time() - llm_total_start
+            record_performance('llm_total', 'LLM完整对话', llm_total_duration,
+                             total_thoughts=len(extra_data["thoughts"]),
+                             total_actions=len(extra_data["actions"]),
+                             total_observations=len(extra_data["observations"]),
+                             total_documents=len(extra_data["documents"]),
+                             answer_length=len(ai_reply_full))
             
             # 5. 保存 AI 消息（包含 extra_data）
             if ai_reply_full:
