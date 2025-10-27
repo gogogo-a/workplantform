@@ -335,6 +335,17 @@ class MessageService:
         try:
             from internal.chat_service.chat_service import ChatService
             from internal.agent.react_agent import ReActAgent
+            from internal.model.user_info import UserInfoModel
+            
+            # 🔥 获取用户权限信息
+            user_info = await UserInfoModel.find_one(UserInfoModel.uuid == user_id)
+            user_permission = user_info.is_admin if user_info else 0
+            logger.info(f"用户权限: user_id={user_id}, is_admin={user_permission}")
+            
+            # 🔥 创建绑定了用户权限的 knowledge_search 工具（使用包装函数而不是 partial）
+            def knowledge_search_with_permission(query: str, top_k: int = 5, use_reranker: bool = True):
+                """知识库搜索工具（已绑定用户权限）"""
+                return knowledge_search(query=query, top_k=top_k, use_reranker=use_reranker, user_permission=user_permission)
             
             # 注意：auto_summary=False，因为我们在数据库层面实现了持久化总结（send_type=2）
             chat_service = ChatService(
@@ -343,7 +354,7 @@ class MessageService:
                 model_name=DEEPSEEK_CHAT.name,
                 model_type=DEEPSEEK_CHAT.model_type,
                 system_prompt=AGENT_RAG_PROMPT,
-                tools=[knowledge_search],
+                tools=[knowledge_search_with_permission],  # 🔥 使用绑定了权限的工具
                 auto_summary=False,  # 关闭底层自动总结，避免与数据库总结重复
                 max_history_count=10
             )
@@ -382,10 +393,10 @@ class MessageService:
                 
                 event_queue.put((event_type, content))
             
-            # 创建 Agent 并传入回调
+            # 创建 Agent 并传入回调（使用绑定了权限的工具）
             agent = ReActAgent(
                 llm_service=chat_service.llm_service,
-                tools={"knowledge_search": knowledge_search},
+                tools={"knowledge_search": knowledge_search_with_permission},  # 🔥 使用绑定了权限的工具
                 max_iterations=5,
                 verbose=False,
                 callback=callback

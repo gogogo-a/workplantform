@@ -37,15 +37,16 @@ class AgentTool:
 
 # ==================== 工具函数定义 ====================
 
-def knowledge_search(query: str, top_k: int = 5, use_reranker: bool = True) -> Dict[str, Any]:
+def knowledge_search(query: str, top_k: int = 5, use_reranker: bool = True, user_permission: int = 0) -> Dict[str, Any]:
     """
     知识库搜索工具
-    从向量数据库中检索相关知识（RAG）
+    从向量数据库中检索相关知识（RAG），根据用户权限过滤文档
     
     Args:
         query: 搜索查询
         top_k: 返回结果数量
         use_reranker: 是否使用重排序
+        user_permission: 用户权限（0=普通用户，1=管理员）
         
     Returns:
         Dict: 包含搜索结果和上下文的字典
@@ -59,13 +60,14 @@ def knowledge_search(query: str, top_k: int = 5, use_reranker: bool = True) -> D
         # 延迟导入，避免循环依赖
         from internal.rag.rag_service import rag_service
         
-        print(f"[工具] 知识库搜索: {query} (Top {top_k})")
+        print(f"[工具] 知识库搜索: {query} (Top {top_k}, user_permission={user_permission})")
         
-        # 执行 RAG 检索（只调用一次）
+        # 执行 RAG 检索（只调用一次，传递用户权限）
         search_results = rag_service.search(
             query=query,
             top_k=top_k,
-            use_reranker=use_reranker
+            use_reranker=use_reranker,
+            user_permission=user_permission  # 🔥 传递用户权限
         )
         
         if not search_results:

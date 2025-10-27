@@ -2,47 +2,127 @@
 文档管理 API 控制器 (RESTful 风格)
 提供文档上传、删除、查询、列表等接口
 """
-from fastapi import APIRouter, UploadFile, File, Query, Path
+from typing import List
+from fastapi import APIRouter, UploadFile, File, Query, Path, Request, Form
 
 from internal.service.orm.document_sever import document_service
 from api.v1.response_controller import json_response
+from pkg.middleware.auth import get_user_from_request
 from log import logger
 
 router = APIRouter(prefix="/documents", tags=["文档管理"])
 
 
-@router.post("", summary="上传文档")
-async def upload_document(file: UploadFile = File(...)):
+@router.post("", summary="上传文档（支持批量）")
+async def upload_document(
+    request: Request,
+    files: List[UploadFile] = File(..., description="文档文件列表（支持单个或多个文件）"),
+    permission: int = Form(default=0, description="文档权限：0=普通用户可见，1=仅管理员可见")
+):
     """
-    上传文档并自动进行 Embedding 处理
+    上传文档并自动进行 Embedding 处理（支持批量上传）
     
-    - **file**: 文档文件（支持 .pdf, .docx, .txt）
+    - **files**: 文档文件列表（支持 .pdf, .docx, .txt）- 可以上传单个或多个文件
+    - **permission**: 文档权限（0=普通用户可见，1=仅管理员可见）- 所有文件共享此权限
     
     处理流程：
     1. 保存文件到本地
-    2. 记录到 MongoDB
+    2. 记录到 MongoDB（包含 permission）
     3. 提交到 Kafka 进行异步 Embedding
-    4. 存储向量到 Milvus（后台处理）
+    4. 存储向量到 Milvus（后台处理，元数据包含 permission）
+    
+    返回格式：
+    - 单个文件：返回单个文档信息
+    - 多个文件：返回文档列表，包含每个文件的处理结果
     """
     try:
-        logger.info(f"收到上传请求: {file.filename}, 类型: {file.content_type}")
+        # 获取用户信息
+        user = get_user_from_request(request)
+        
+        logger.info(f"收到上传请求: 用户={user.get('nickname')}, 文件数={len(files)}, 权限={permission}")
         
         # 验证文件类型
         allowed_extensions = ['.pdf', '.docx', '.doc', '.txt']
-        file_ext = file.filename[file.filename.rfind('.'):].lower()
         
-        if file_ext not in allowed_extensions:
+        # 存储所有结果
+        results = []
+        success_count = 0
+        failed_count = 0
+        
+        # 逐个处理文件
+        for file in files:
+            try:
+                logger.info(f"处理文件: {file.filename}, 类型: {file.content_type}")
+                
+                # 验证文件类型
+                file_ext = file.filename[file.filename.rfind('.'):].lower()
+                
+                if file_ext not in allowed_extensions:
+                    failed_count += 1
+                    results.append({
+                        "filename": file.filename,
+                        "success": False,
+                        "message": f"不支持的文件类型: {file_ext}",
+                        "ret": -2
+                    })
+                    continue
+                
+                # 调用业务逻辑
+                message, ret, data = await document_service.upload_document(
+                    file=file,
+                    permission=permission,
+                    uploader_id=user.get('user_id'),
+                    uploader_name=user.get('nickname')
+                )
+                
+                if ret == 0:
+                    success_count += 1
+                    results.append({
+                        "filename": file.filename,
+                        "success": True,
+                        "message": message,
+                        "ret": ret,
+                        "data": data
+                    })
+                else:
+                    failed_count += 1
+                    results.append({
+                        "filename": file.filename,
+                        "success": False,
+                        "message": message,
+                        "ret": ret
+                    })
+                    
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"处理文件 {file.filename} 失败: {e}", exc_info=True)
+                results.append({
+                    "filename": file.filename,
+                    "success": False,
+                    "message": f"处理失败: {str(e)}",
+                    "ret": -1
+                })
+        
+        # 返回结果
+        if len(files) == 1:
+            # 单个文件：返回单个结果（保持向后兼容）
+            result = results[0]
+            if result["success"]:
+                return json_response(result["message"], result["ret"], result.get("data"))
+            else:
+                return json_response(result["message"], result["ret"])
+        else:
+            # 多个文件：返回批量结果
             return json_response(
-                f"不支持的文件类型: {file_ext}，支持的类型: {', '.join(allowed_extensions)}",
-                -2
+                f"批量上传完成：成功 {success_count} 个，失败 {failed_count} 个",
+                0 if failed_count == 0 else -1,
+                {
+                    "total": len(files),
+                    "success_count": success_count,
+                    "failed_count": failed_count,
+                    "results": results
+                }
             )
-        
-        # 调用业务逻辑
-        message, ret, data = await document_service.upload_document(file)
-        
-        if data:
-            return json_response(message, ret, data)
-        return json_response(message, ret)
         
     except Exception as e:
         logger.error(f"上传文档失败: {e}", exc_info=True)

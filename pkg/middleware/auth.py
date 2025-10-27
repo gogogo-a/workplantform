@@ -86,7 +86,8 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
         
         # 将用户信息存储到 request.state 中
         request.state.user = user
-        logger.info(f"JWT中间件: 用户 {user.get('user_id')} ({user.get('nickname')}) 访问 {request.url.path}")
+        admin_flag = "👑管理员" if user.get('is_admin') == 1 else ""
+        logger.info(f"JWT中间件: 用户 {user.get('user_id')} ({user.get('nickname')}{admin_flag}) 访问 {request.url.path}")
         
         # 继续处理请求
         response = await call_next(request)
@@ -101,7 +102,7 @@ async def get_current_user(request: Request) -> Optional[dict]:
         request: FastAPI Request对象
         
     Returns:
-        dict: 用户信息 {"user_id": "xxx", "nickname": "xxx"}
+        dict: 用户信息 {"user_id": "xxx", "nickname": "xxx", "is_admin": 0/1}
         None: 如果没有token或token无效
     """
     try:
@@ -125,7 +126,8 @@ async def get_current_user(request: Request) -> Optional[dict]:
         payload = verify_token(token)
         
         if payload:
-            logger.debug(f"Token验证成功: user_id={payload.get('user_id')}, nickname={payload.get('nickname')}")
+            is_admin_text = "管理员" if payload.get('is_admin') == 1 else "普通用户"
+            logger.debug(f"Token验证成功: user_id={payload.get('user_id')}, nickname={payload.get('nickname')}, 身份={is_admin_text}")
             return payload
         else:
             logger.warning("Token验证失败: verify_token返回None")
@@ -144,7 +146,7 @@ def get_user_from_request(request: Request) -> dict:
         request: FastAPI Request对象
         
     Returns:
-        dict: 用户信息 {"user_id": "xxx", "nickname": "xxx"}
+        dict: 用户信息 {"user_id": "xxx", "nickname": "xxx", "is_admin": 0/1}
         
     Raises:
         HTTPException: 如果用户信息不存在

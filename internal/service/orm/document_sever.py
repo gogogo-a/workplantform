@@ -25,17 +25,27 @@ class DocumentService:
         self.upload_dir.mkdir(exist_ok=True)
         self.collection_name = MILVUS_COLLECTION_NAME
     
-    async def upload_document(self, file: UploadFile):
+    async def upload_document(
+        self,
+        file: UploadFile,
+        permission: int = 0,
+        uploader_id: str = None,
+        uploader_name: str = None
+    ):
         """
         上传文档并异步处理
         
         Args:
             file: 上传的文件
+            permission: 文档权限（0=普通用户可见，1=仅管理员可见）
+            uploader_id: 上传者ID
+            uploader_name: 上传者名称
             
         Returns:
             tuple: (message, ret, data) - message: 提示信息, ret: 返回码(0成功/-1失败), data: 文档信息
         """
         try:
+            from datetime import datetime
             # 1. 生成唯一文件名
             file_uuid = str(uuid_module.uuid4())
             file_extension = Path(file.filename).suffix
@@ -64,6 +74,7 @@ class DocumentService:
                 page_count = 0
             
             # 4. 保存文档信息到 MongoDB（初始状态：未处理）
+            upload_time = datetime.now()
             doc_model = DocumentModel(
                 uuid=file_uuid,
                 name=file.filename,
@@ -71,7 +82,14 @@ class DocumentService:
                 page=page_count,
                 url=f"/uploads/{new_filename}",
                 size=file_size,
-                status=0  # 0.未处理
+                status=0,  # 0.未处理
+                permission=permission,  # 🔥 文档权限
+                extra_data={  # 🔥 额外数据
+                    "uploader_id": uploader_id,
+                    "uploader_name": uploader_name,
+                    "upload_time": upload_time.isoformat(),
+                    "file_extension": file_extension
+                }
             )
             await doc_model.insert()
             
@@ -82,9 +100,13 @@ class DocumentService:
                 "task_type": "file",
                 "file_path": str(file_path),
                 "document_uuid": file_uuid,
+                "permission": permission,  # 🔥 传递权限信息
                 "metadata": {
                     "filename": file.filename,
-                    "source": "api_upload"
+                    "source": "api_upload",
+                    "permission": permission,  # 🔥 在元数据中也添加权限
+                    "uploader_id": uploader_id,
+                    "uploader_name": uploader_name
                 }
             }
             
@@ -121,6 +143,7 @@ class DocumentService:
                 "content_length": len(parsed_content),
                 "status": 1,
                 "status_text": "处理中",
+                "permission": permission,  # 🔥 返回权限信息
                 "message": "文档已提交处理，后台正在进行 Embedding"
             }
             return "上传成功", 0, data
@@ -167,7 +190,10 @@ class DocumentService:
                 "content_length": len(doc.content) if doc.content else 0,
                 "status": doc.status,
                 "status_text": status_text_map.get(doc.status, "未知"),
+                "permission": doc.permission,  # 🔥 返回权限信息
+                "extra_data": doc.extra_data,  # 🔥 返回额外数据（上传者、处理时间等）
                 "uploaded_at": doc.create_at.isoformat() if doc.create_at else None,
+                "updated_at": doc.update_at.isoformat() if doc.update_at else None,  # 🔥 返回更新时间
                 "chunk_count": chunk_count
             }
             return "查询成功", 0, data
@@ -257,8 +283,10 @@ class DocumentService:
                 document_list.append({
                     "uuid": doc.uuid,
                     "name": doc.name,
+                    "size": doc.size,  # 🔥 添加文件大小
                     "status": doc.status,
                     "status_text": status_text_map.get(doc.status, "未知"),
+                    "permission": doc.permission,  # 🔥 添加权限信息
                     "uploaded_at": doc.create_at.isoformat() if doc.create_at else None,
                     "chunk_count": chunk_count
                 })
@@ -363,7 +391,8 @@ class DocumentService:
         document_uuid: str, 
         status: int,
         page: Optional[int] = None,
-        content: Optional[str] = None
+        content: Optional[str] = None,
+        extra_data_update: Optional[Dict[str, Any]] = None
     ):
         """
         更新文档状态（同步版本，供 Kafka 消费者使用）
@@ -374,6 +403,7 @@ class DocumentService:
             status: 状态码（0.未处理，1.处理中，2.处理完成，3.处理失败）
             page: 文档页数（可选）
             content: 文档内容（可选）
+            extra_data_update: 额外数据更新（可选，会合并到现有的extra_data中）
             
         Returns:
             tuple: (message, ret) - message: 提示信息, ret: 返回码
@@ -381,6 +411,7 @@ class DocumentService:
         try:
             from pymongo import MongoClient
             from pkg.constants.constants import MONGODB_URL, MONGODB_DATABASE
+            from datetime import datetime
             
             # 使用同步的 pymongo 客户端
             client = MongoClient(MONGODB_URL)
@@ -395,11 +426,17 @@ class DocumentService:
                 return "文档不存在", -2
             
             # 准备更新数据
-            update_data = {"status": status}
+            update_data = {"status": status, "update_at": datetime.now()}
             if page is not None:
                 update_data["page"] = page
             if content is not None:
                 update_data["content"] = content
+            
+            # 🔥 更新 extra_data（合并新数据）
+            if extra_data_update is not None:
+                existing_extra_data = doc.get("extra_data", {})
+                existing_extra_data.update(extra_data_update)
+                update_data["extra_data"] = existing_extra_data
             
             # 更新文档
             result = collection.update_one(

@@ -68,8 +68,12 @@ class UserInfoService:
             await user.insert()
             logger.info(f"用户注册成功: {user.nickname} ({user.uuid})")
             
-            # 6. 生成 token
-            token_data = {"user_id": user.uuid, "nickname": user.nickname}
+            # 6. 生成 token（包含管理员标识）
+            token_data = {
+                "user_id": user.uuid,
+                "nickname": user.nickname,
+                "is_admin": user.is_admin
+            }
             token = create_token(token_data)
             
             response = UserInfoResponse.from_orm(user)
@@ -100,8 +104,12 @@ class UserInfoService:
                 logger.warning(f"登录失败: 密码错误 - {req.nickname}")
                 return "昵称或密码错误", None, -2
             
-            # 生成 token
-            token_data = {"user_id": user.uuid, "nickname": user.nickname}
+            # 生成 token（包含管理员标识）
+            token_data = {
+                "user_id": user.uuid,
+                "nickname": user.nickname,
+                "is_admin": user.is_admin
+            }
             token = create_token(token_data)
             
             logger.info(f"用户登录成功: {user.nickname} ({user.uuid})")
@@ -135,8 +143,12 @@ class UserInfoService:
                 logger.warning(f"邮箱登录失败: 用户不存在 - {req.email}")
                 return "该邮箱未注册", None, -2
             
-            # 生成 token
-            token_data = {"user_id": user.uuid, "nickname": user.nickname}
+            # 生成 token（包含管理员标识）
+            token_data = {
+                "user_id": user.uuid,
+                "nickname": user.nickname,
+                "is_admin": user.is_admin
+            }
             token = create_token(token_data)
             
             logger.info(f"用户邮箱登录成功: {user.nickname} ({user.uuid})")

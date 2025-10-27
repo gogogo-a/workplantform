@@ -63,7 +63,8 @@ class DocumentProcessor:
         file_path: str,
         document_uuid: str,
         collection_name: Optional[str] = None,
-        extra_metadata: Optional[Dict[str, Any]] = None
+        extra_metadata: Optional[Dict[str, Any]] = None,
+        permission: int = 0
     ) -> Dict[str, Any]:
         """
         同步处理单个文件（加载 -> 分割 -> Embedding -> 存储）
@@ -73,11 +74,18 @@ class DocumentProcessor:
             document_uuid: 文档 UUID
             collection_name: Milvus 集合名称（可选）
             extra_metadata: 额外元数据（可选）
+            permission: 文档权限（0=普通用户可见，1=仅管理员可见）
         
         Returns:
-            Dict: 处理结果 {success, message, chunks_count, vectors_count}
+            Dict: 处理结果 {success, message, chunks_count, vectors_count, embedding_time, processing_time}
         """
         try:
+            import time
+            from datetime import datetime
+            
+            # 记录处理开始时间
+            process_start_time = time.time()
+            start_datetime = datetime.now()
             # 1. 验证文件
             if not is_supported_file(file_path):
                 return {
@@ -101,6 +109,7 @@ class DocumentProcessor:
                     "document_uuid": document_uuid,
                     "filename": file_info['name'],
                     "source": file_path,
+                    "permission": permission,  # 🔥 添加权限到元数据
                     **(extra_metadata or {})
                 }
             )
@@ -113,15 +122,17 @@ class DocumentProcessor:
             
             logger.info(f"文档分割完成: {len(chunks)} 个块")
             
-            # 4. 批量 Embedding
+            # 4. 批量 Embedding（记录时间）
+            embedding_start_time = time.time()
             texts = [chunk["content"] for chunk in chunks]
             embeddings = embedding_service.encode_documents(
                 documents=texts,
                 batch_size=self.embedding_config.get('batch_size', 32),
                 normalize=True
             )
+            embedding_duration = time.time() - embedding_start_time
             
-            logger.info(f"Embedding 生成完成: {len(embeddings)} 个向量")
+            logger.info(f"Embedding 生成完成: {len(embeddings)} 个向量, 耗时: {embedding_duration:.2f}秒")
             
             # 5. 准备 Milvus 数据
             texts = []
@@ -135,6 +146,7 @@ class DocumentProcessor:
                     "chunk_count": len(chunks),
                     "filename": file_info['name'],
                     "source": file_path,
+                    "permission": permission,  # 🔥 确保每个chunk都有permission
                     **chunk["metadata"]
                 })
             
@@ -165,19 +177,29 @@ class DocumentProcessor:
             )
             success = ids is not None and len(ids) > 0
             
+            # 计算总处理时间
+            process_duration = time.time() - process_start_time
+            complete_datetime = datetime.now()
+            
             if success:
                 logger.info(
                     f"✅ 文档处理完成: {file_info['name']}, "
                     f"UUID: {document_uuid}, "
                     f"块数: {len(chunks)}, "
-                    f"向量数: {len(embeddings)}"
+                    f"向量数: {len(embeddings)}, "
+                    f"Embedding耗时: {embedding_duration:.2f}秒, "
+                    f"总耗时: {process_duration:.2f}秒"
                 )
                 return {
                     "success": True,
                     "message": "处理成功",
                     "chunks_count": len(chunks),
                     "vectors_count": len(embeddings),
-                    "document_uuid": document_uuid
+                    "document_uuid": document_uuid,
+                    "embedding_time": round(embedding_duration, 2),  # 🔥 embedding时间（秒）
+                    "processing_time": round(process_duration, 2),  # 🔥 总处理时间（秒）
+                    "start_datetime": start_datetime.isoformat(),  # 🔥 开始时间
+                    "complete_datetime": complete_datetime.isoformat()  # 🔥 完成时间
                 }
             else:
                 return {
@@ -385,7 +407,8 @@ class DocumentProcessor:
         document_uuid: str, 
         status: int,
         page: Optional[int] = None,
-        content: Optional[str] = None
+        content: Optional[str] = None,
+        extra_data_update: Optional[Dict[str, Any]] = None
     ):
         """
         在同步上下文中更新文档状态（供 Kafka 消费者使用）
@@ -396,6 +419,7 @@ class DocumentProcessor:
             status: 状态码
             page: 文档页数（可选）
             content: 文档内容（可选）
+            extra_data_update: 额外数据更新（可选）
         """
         from internal.service.orm.document_sever import document_service
         
@@ -404,7 +428,8 @@ class DocumentProcessor:
             document_uuid, 
             status, 
             page, 
-            content
+            content,
+            extra_data_update  # 🔥 传递 extra_data_update 参数
         )
     
     def _process_task(self, task: Dict[str, Any]):
@@ -437,6 +462,7 @@ class DocumentProcessor:
         document_uuid = task.get('document_uuid')
         collection_name = task.get('collection_name')
         metadata = task.get('metadata', {})
+        permission = task.get('permission', 0)  # 🔥 获取权限信息
         
         if not file_path or not document_uuid:
             logger.error("文件任务缺少必要字段: file_path, document_uuid")
@@ -451,7 +477,8 @@ class DocumentProcessor:
             file_path=file_path,
             document_uuid=document_uuid,
             collection_name=collection_name,
-            extra_metadata=metadata
+            extra_metadata=metadata,
+            permission=permission  # 🔥 传递权限信息
         )
         
         # 根据处理结果更新文档状态
@@ -459,10 +486,22 @@ class DocumentProcessor:
             if result['success']:
                 # 处理成功：status=2（处理完成）
                 chunks_count = result.get('chunks_count', 0)
+                
+                # 🔥 准备extra_data更新（记录处理时间）
+                extra_data_update = {
+                    "embedding_time_seconds": result.get('embedding_time'),
+                    "processing_time_seconds": result.get('processing_time'),
+                    "processing_start_time": result.get('start_datetime'),
+                    "processing_complete_time": result.get('complete_datetime'),
+                    "vectors_count": result.get('vectors_count'),
+                    "chunks_count": chunks_count
+                }
+                
                 self._update_document_status_sync(
                     document_uuid, 
                     status=2,
-                    page=chunks_count  # 将 chunks_count 存储到 page 字段
+                    page=chunks_count,  # 将 chunks_count 存储到 page 字段
+                    extra_data_update=extra_data_update  # 🔥 更新extra_data
                 )
                 logger.info(f"✅ 文档处理完成，状态已更新: {document_uuid}")
             else:
@@ -486,7 +525,7 @@ class DocumentProcessor:
         result = self.process_text(
             text=content,
             document_uuid=document_uuid,
-                collection_name=collection_name,
+            collection_name=collection_name,
             metadata=metadata
         )
         

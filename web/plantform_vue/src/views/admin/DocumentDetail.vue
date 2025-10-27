@@ -36,8 +36,25 @@
               <span class="value">{{ document.page || '-' }}</span>
             </div>
             <div class="info-item">
+              <span class="label">访问权限：</span>
+              <span class="value">
+                <el-tag v-if="document.permission === 1" type="warning" size="small">
+                  <el-icon style="margin-right: 4px;"><Lock /></el-icon>
+                  仅管理员可见
+                </el-tag>
+                <el-tag v-else type="success" size="small">
+                  <el-icon style="margin-right: 4px;"><User /></el-icon>
+                  所有用户和管理员可见
+                </el-tag>
+              </span>
+            </div>
+            <div class="info-item">
               <span class="label">上传时间：</span>
               <span class="value">{{ formatDate(document.uploaded_at) }}</span>
+            </div>
+            <div class="info-item" v-if="document.updated_at">
+              <span class="label">更新时间：</span>
+              <span class="value">{{ formatDate(document.updated_at) }}</span>
             </div>
             <div class="info-item">
               <span class="label">文本块数量：</span>
@@ -76,6 +93,79 @@
               <p class="status-desc">
                 {{ getStatusDescription(document.status, document.chunk_count) }}
               </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 上传者信息卡片 -->
+        <div class="info-card" v-if="isAdmin && document.extra_data">
+          <div class="card-header">
+            <el-icon class="header-icon"><User /></el-icon>
+            <h3>上传者信息</h3>
+          </div>
+          <div class="card-body">
+            <div class="info-item" v-if="document.extra_data.uploader_name">
+              <span class="label">上传者：</span>
+              <span class="value">{{ document.extra_data.uploader_name }}</span>
+            </div>
+            <div class="info-item" v-if="document.extra_data.uploader_id">
+              <span class="label">上传者 ID：</span>
+              <span class="value">{{ document.extra_data.uploader_id }}</span>
+            </div>
+            <div class="info-item" v-if="document.extra_data.upload_time">
+              <span class="label">上传时间：</span>
+              <span class="value">{{ formatDate(document.extra_data.upload_time) }}</span>
+            </div>
+            <div class="info-item" v-if="document.extra_data.file_extension">
+              <span class="label">文件类型：</span>
+              <span class="value">{{ document.extra_data.file_extension }}</span>
+            </div>
+            <div class="info-item" v-if="document.extra_data.processing_time">
+              <span class="label">处理耗时：</span>
+              <span class="value">{{ formatDuration(document.extra_data.processing_time) }}</span>
+            </div>
+            <div class="info-item" v-if="document.extra_data.embedding_model">
+              <span class="label">Embedding 模型：</span>
+              <span class="value">{{ document.extra_data.embedding_model }}</span>
+            </div>
+            <div class="info-item" v-if="document.extra_data.chunk_size">
+              <span class="label">分块大小：</span>
+              <span class="value">{{ document.extra_data.chunk_size }} 字符</span>
+            </div>
+            <div class="info-item" v-if="document.extra_data.chunk_overlap">
+              <span class="label">分块重叠：</span>
+              <span class="value">{{ document.extra_data.chunk_overlap }} 字符</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 访问权限卡片（所有用户可见） -->
+        <div class="info-card" v-if="isAdmin">
+          <div class="card-header">
+            <el-icon class="header-icon"><Lock /></el-icon>
+            <h3>文档信息</h3>
+          </div>
+          <div class="card-body">
+            <div class="info-item">
+              <span class="label">文件名：</span>
+              <span class="value">{{ document.name }}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">访问权限：</span>
+              <span class="value">
+                <el-tag v-if="document.permission === 1" type="warning" size="small">
+                  <el-icon style="margin-right: 4px;"><Lock /></el-icon>
+                  仅管理员可见
+                </el-tag>
+                <el-tag v-else type="success" size="small">
+                  <el-icon style="margin-right: 4px;"><User /></el-icon>
+                  所有用户和管理员可见
+                </el-tag>
+              </span>
+            </div>
+            <div class="info-item">
+              <span class="label">上传时间：</span>
+              <span class="value">{{ formatDate(document.uploaded_at) }}</span>
             </div>
           </div>
         </div>
@@ -146,7 +236,9 @@ import {
   Operation,
   Tickets,
   FolderOpened,
-  Reading
+  Reading,
+  User,
+  Lock
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -179,6 +271,16 @@ const formatDate = (dateStr) => {
     hour: '2-digit',
     minute: '2-digit'
   })
+}
+
+// 格式化处理耗时
+const formatDuration = (seconds) => {
+  if (!seconds || seconds === 0) return '-'
+  if (seconds < 1) return `${(seconds * 1000).toFixed(0)} 毫秒`
+  if (seconds < 60) return `${seconds.toFixed(2)} 秒`
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = (seconds % 60).toFixed(0)
+  return `${minutes} 分 ${remainingSeconds} 秒`
 }
 
 // 获取文档详情

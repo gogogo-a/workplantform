@@ -12,20 +12,9 @@
           @keyup.enter="handleSearch"
           style="width: 240px"
         />
-        <el-upload
-          ref="uploadRef"
-          :action="uploadAction"
-          :headers="uploadHeaders"
-          :on-success="handleUploadSuccess"
-          :on-error="handleUploadError"
-          :show-file-list="false"
-          :before-upload="beforeUpload"
-          accept=".pdf,.doc,.docx,.txt"
-        >
-          <el-button type="primary" :icon="Upload">
-            上传文档
-          </el-button>
-        </el-upload>
+        <el-button type="primary" :icon="Upload" @click="showUploadDialog = true">
+          上传文档
+        </el-button>
         <el-button :icon="RefreshRight" @click="handleRefresh">
           刷新
         </el-button>
@@ -55,6 +44,19 @@
           <template #default="{ row }">
             <el-tag :type="getStatusType(row.status)" size="small">
               {{ row.status_text || '未知' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        
+        <el-table-column label="权限" width="180">
+          <template #default="{ row }">
+            <el-tag v-if="row.permission === 1" type="warning" size="small">
+              <el-icon style="margin-right: 4px;"><Lock /></el-icon>
+              仅管理员
+            </el-tag>
+            <el-tag v-else type="success" size="small">
+              <el-icon style="margin-right: 4px;"><User /></el-icon>
+              所有用户和管理员
             </el-tag>
           </template>
         </el-table-column>
@@ -100,15 +102,81 @@
         />
       </div>
     </div>
+
+    <!-- 上传文档对话框 -->
+    <el-dialog
+      v-model="showUploadDialog"
+      title="上传文档"
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <el-form label-width="100px">
+        <el-form-item label="选择文件">
+          <el-upload
+            ref="uploadRef"
+            :auto-upload="false"
+            :show-file-list="true"
+            :on-change="handleFileSelect"
+            :on-remove="handleFileRemove"
+            accept=".pdf,.doc,.docx,.txt"
+            multiple
+            drag
+          >
+            <el-icon class="el-icon--upload"><Upload /></el-icon>
+            <div class="el-upload__text">
+              拖拽文件到此处或 <em>点击选择</em>
+            </div>
+            <template #tip>
+              <div class="el-upload__tip">
+                支持 PDF、DOC、DOCX、TXT 格式，支持多文件上传，单个文件最大 1000MB
+              </div>
+            </template>
+          </el-upload>
+        </el-form-item>
+        
+        <el-form-item label="访问权限">
+          <el-radio-group v-model="uploadForm.permission" class="permission-selector">
+            <el-radio :label="0">
+              <div class="radio-content">
+                <el-icon><User /></el-icon>
+                <span>普通文档（所有用户和管理员可见）</span>
+              </div>
+            </el-radio>
+            <el-radio :label="1">
+              <div class="radio-content">
+                <el-icon><Lock /></el-icon>
+                <span>管理员文档（仅管理员可见）</span>
+              </div>
+            </el-radio>
+          </el-radio-group>
+          <div class="permission-tip" v-if="uploadForm.files.length > 1">
+            <el-icon><InfoFilled /></el-icon>
+            <span>所有文件将共享此权限设置（{{ uploadForm.files.length }} 个文件）</span>
+          </div>
+        </el-form-item>
+      </el-form>
+      
+      <template #footer>
+        <el-button @click="handleCancelUpload">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="uploading"
+          :disabled="!uploadForm.files || uploadForm.files.length === 0"
+          @click="handleConfirmUpload"
+        >
+          {{ uploading ? '上传中...' : (uploadForm.files.length > 1 ? `确认上传 (${uploadForm.files.length} 个文件)` : '确认上传') }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { getDocumentList, deleteDocument } from '@/api'
+import { getDocumentList, deleteDocument, uploadDocument } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Upload, RefreshRight, Document } from '@element-plus/icons-vue'
+import { Search, Upload, RefreshRight, Document, User, Lock, InfoFilled } from '@element-plus/icons-vue'
 import CustomPagination from '@/components/public/CustomPagination.vue'
 
 const router = useRouter()
@@ -120,14 +188,13 @@ const pageSize = ref(20)
 const total = ref(0)
 const searchKeyword = ref('')
 
-const uploadAction = computed(() => {
-  const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
-  return `${baseURL}/documents`
-})
-
-const uploadHeaders = computed(() => {
-  const token = localStorage.getItem('token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
+// 上传相关
+const showUploadDialog = ref(false)
+const uploading = ref(false)
+const uploadRef = ref(null)
+const uploadForm = ref({
+  files: [], // 改为数组，支持多文件
+  permission: 0 // 默认为普通文档
 })
 
 // 格式化文件大小
@@ -196,12 +263,19 @@ const fetchDocumentList = async () => {
   }
 }
 
-// 文件上传前验证
-const beforeUpload = (file) => {
-  const maxSize = 1000 * 1024 * 1024 // 10MB
+// 文件选择处理
+const handleFileSelect = (file, fileList) => {
+  const maxSize = 1000 * 1024 * 1024 // 1000MB
+  
+  // 验证单个文件大小
   if (file.size > maxSize) {
-    ElMessage.error('文件大小不能超过 1000MB')
-    return false
+    ElMessage.error(`文件 ${file.name} 大小超过 1000MB，已自动移除`)
+    // 从 fileList 中移除这个文件
+    const index = fileList.findIndex(f => f.uid === file.uid)
+    if (index > -1) {
+      fileList.splice(index, 1)
+    }
+    return
   }
   
   const allowedTypes = [
@@ -211,24 +285,88 @@ const beforeUpload = (file) => {
     'text/plain'
   ]
   
-  if (!allowedTypes.includes(file.type)) {
-    ElMessage.error('只支持 PDF、DOC、DOCX、TXT 格式的文件')
-    return false
+  // 验证文件类型
+  if (!allowedTypes.includes(file.raw.type)) {
+    ElMessage.error(`文件 ${file.name} 格式不支持，只支持 PDF、DOC、DOCX、TXT 格式`)
+    // 从 fileList 中移除这个文件
+    const index = fileList.findIndex(f => f.uid === file.uid)
+    if (index > -1) {
+      fileList.splice(index, 1)
+    }
+    return
   }
   
-  return true
+  // 更新文件列表
+  uploadForm.value.files = fileList.map(f => f.raw)
 }
 
-// 文件上传成功
-const handleUploadSuccess = (response) => {
-  ElMessage.success('文档上传成功')
-  fetchDocumentList()
+// 文件移除处理
+const handleFileRemove = (file, fileList) => {
+  uploadForm.value.files = fileList.map(f => f.raw)
 }
 
-// 文件上传失败
-const handleUploadError = (error) => {
-  console.error('文件上传失败:', error)
-  ElMessage.error('文件上传失败，请重试')
+// 取消上传
+const handleCancelUpload = () => {
+  showUploadDialog.value = false
+  uploadForm.value.files = []
+  uploadForm.value.permission = 0
+  uploadRef.value?.clearFiles()
+}
+
+// 确认上传
+const handleConfirmUpload = async () => {
+  if (!uploadForm.value.files || uploadForm.value.files.length === 0) {
+    ElMessage.warning('请选择要上传的文件')
+    return
+  }
+  
+  uploading.value = true
+  
+  try {
+    const formData = new FormData()
+    
+    // 添加所有文件
+    uploadForm.value.files.forEach(file => {
+      formData.append('files', file)
+    })
+    
+    // 添加权限（所有文件共享）
+    formData.append('permission', uploadForm.value.permission)
+    
+    const fileCount = uploadForm.value.files.length
+    const permissionText = uploadForm.value.permission === 1 ? '仅管理员可见' : '所有用户和管理员可见'
+    
+    console.log(`批量上传 ${fileCount} 个文档，权限级别:`, uploadForm.value.permission)
+    
+    const response = await uploadDocument(formData)
+    
+    // 根据返回结果显示消息
+    if (fileCount === 1) {
+      // 单文件上传
+      ElMessage.success(`文档上传成功！权限级别: ${permissionText}`)
+    } else {
+      // 多文件上传
+      const successCount = response?.success_count || 0
+      const failedCount = response?.failed_count || 0
+      
+      if (failedCount === 0) {
+        ElMessage.success(`成功上传 ${successCount} 个文档！权限级别: ${permissionText}`)
+      } else {
+        ElMessage.warning(`上传完成：成功 ${successCount} 个，失败 ${failedCount} 个。权限级别: ${permissionText}`)
+      }
+    }
+    
+    // 关闭对话框并重置表单
+    handleCancelUpload()
+    
+    // 刷新列表
+    await fetchDocumentList()
+  } catch (error) {
+    console.error('文件上传失败:', error)
+    ElMessage.error(error.message || '文件上传失败，请重试')
+  } finally {
+    uploading.value = false
+  }
 }
 
 // 搜索
@@ -382,6 +520,102 @@ onMounted(() => {
   margin-top: 20px;
   padding-top: 20px;
   border-top: 1px solid var(--border-color);
+}
+
+/* 上传对话框样式 */
+:deep(.el-dialog) {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+}
+
+:deep(.el-dialog__header) {
+  border-bottom: 1px solid var(--border-color);
+}
+
+:deep(.el-dialog__title) {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+:deep(.el-dialog__body) {
+  color: var(--text-primary);
+}
+
+/* 权限选择器样式 */
+.permission-selector {
+  width: 100%;
+}
+
+.permission-selector :deep(.el-radio) {
+  width: 100%;
+  margin-right: 0;
+  margin-bottom: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.permission-selector :deep(.el-radio:hover) {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--primary-color);
+}
+
+.permission-selector :deep(.el-radio.is-checked) {
+  background: rgba(99, 102, 241, 0.1);
+  border-color: var(--primary-color);
+}
+
+.radio-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+}
+
+.radio-content .el-icon {
+  font-size: 16px;
+}
+
+/* 权限提示样式 */
+.permission-tip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 6px;
+  color: var(--primary-color);
+  font-size: 13px;
+}
+
+.permission-tip .el-icon {
+  font-size: 16px;
+}
+
+/* 上传组件样式 */
+:deep(.el-upload-dragger) {
+  background: rgba(255, 255, 255, 0.03);
+  border: 2px dashed var(--border-color);
+}
+
+:deep(.el-upload-dragger:hover) {
+  border-color: var(--primary-color);
+}
+
+:deep(.el-icon--upload) {
+  color: var(--primary-color);
+}
+
+:deep(.el-upload__text) {
+  color: var(--text-primary);
+}
+
+:deep(.el-upload__tip) {
+  color: var(--text-secondary);
 }
 </style>
 

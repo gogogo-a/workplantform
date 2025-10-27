@@ -182,16 +182,18 @@ class RAGService:
         filter_metadata: Optional[Dict[str, Any]] = None,
         use_reranker: Optional[bool] = None,
         rerank_top_k: Optional[int] = None,
-        rerank_score_threshold: float = -100.0  # BGE reranker 输出 logits，可以是负数
+        rerank_score_threshold: float = -100.0,  # BGE reranker 输出 logits，可以是负数
+        user_permission: int = 0  # 🔥 用户权限（0=普通用户，1=管理员）
     ) -> List[Dict[str, Any]]:
         """
         搜索相关文档（包含 Rerank 和去重）
         
         流程：
         1. 向量检索
-        2. Rerank 重排序（可选）
-        3. 去重：过滤分数差异 <= 0.02 (相似度 >= 98%) 的重复文档
-        4. 返回最多 top_k 个最相关的不重复文档
+        2. 根据用户权限过滤文档（普通用户只能看permission=0的文档，管理员可以看所有文档）
+        3. Rerank 重排序（可选）
+        4. 去重：过滤分数差异 <= 0.02 (相似度 >= 98%) 的重复文档
+        5. 返回最多 top_k 个最相关的不重复文档
         
         Args:
             query: 查询文本
@@ -200,6 +202,7 @@ class RAGService:
             use_reranker: 是否使用 Reranker（None 表示使用默认设置）
             rerank_top_k: 去重后返回的结果数量（默认5个，None 表示与 top_k 相同）
             rerank_score_threshold: Rerank 分数阈值
+            user_permission: 用户权限（0=普通用户，只能查询permission=0的文档；1=管理员，可查询所有文档）
             
         Returns:
             List[Dict]: 去重后的搜索结果列表（最多 rerank_top_k 个不重复文档）
@@ -262,12 +265,20 @@ class RAGService:
                             hit["metadata"].get(k) == v
                             for k, v in filter_metadata.items()
                         )
-                        if match:
-                            formatted_results.append(result)
-                    else:
-                        formatted_results.append(result)
+                        if not match:
+                            continue
+                    
+                    # 🔥 权限过滤：普通用户（user_permission=0）只能看 permission=0 的文档
+                    # 📌 兼容性处理：旧文档没有 permission 字段，默认视为 0（普通用户可见）
+                    doc_permission = hit["metadata"].get("permission", 0)  # 默认为 0
+                    if user_permission == 0 and doc_permission == 1:
+                        # 普通用户不能看管理员专属文档
+                        logger.debug(f"权限过滤：跳过管理员文档 {hit['id']}")
+                        continue
+                    
+                    formatted_results.append(result)
             
-            logger.info(f"✓ 向量检索完成，返回 {len(formatted_results)} 条候选")
+            logger.info(f"✓ 向量检索完成，返回 {len(formatted_results)} 条候选（已应用权限过滤，user_permission={user_permission}）")
             
             # 4. Rerank 步骤（如果启用）
             if use_reranker and self.reranker and formatted_results:

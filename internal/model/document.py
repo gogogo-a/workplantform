@@ -20,6 +20,8 @@ class DocumentModel(Document):
     url: str = Field(..., description="文档URL")
     size: int = Field(..., description="文档大小(字节)")
     status: int = Field(default=0, description="文档状态")  # 0.未处理，1.处理中，2.处理完成，3.处理失败
+    permission: int = Field(default=0, description="文档权限")  # 0.用户，1.管理员
+    extra_data: dict = Field(default={}, description="额外数据")
     create_at: datetime = Field(default_factory=datetime.now)
     update_at: datetime = Field(default_factory=datetime.now)
     
