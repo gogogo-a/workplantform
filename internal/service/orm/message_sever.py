@@ -7,6 +7,9 @@ from typing import Tuple, Optional, Dict, Any, List, AsyncGenerator
 from datetime import datetime
 import uuid as uuid_module
 import time
+import os
+import base64
+from pathlib import Path as PathlibPath
 
 from internal.model.message import MessageModel
 from internal.model.session import SessionModel
@@ -20,6 +23,13 @@ from pkg.agent_prompt.agent_tool import knowledge_search
 from log import logger
 from pkg.constants.constants import MILVUS_COLLECTION_NAME, SUMMARY_MESSAGE_THRESHOLD
 from internal.monitor import record_performance
+
+# 文件上传配置
+MESSAGE_FILES_DIR = "uploads/message_files"  # 消息文件上传目录
+os.makedirs(MESSAGE_FILES_DIR, exist_ok=True)  # 确保目录存在
+
+# 支持的图片格式
+SUPPORTED_IMAGE_FORMATS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif'}
 
 class MessageService:
     """消息管理服务（单例模式）"""
@@ -121,27 +131,47 @@ class MessageService:
         file_type: Optional[str] = None,
         file_name: Optional[str] = None,
         file_size: Optional[str] = None,
-        file_content: Optional[str] = None
+        file_content: Optional[str] = None,
+        file_bytes: Optional[bytes] = None
     ) -> MessageModel:
         """
         保存用户消息到数据库
         
         Args:
-            file_content: 文件原始内容（保存到 extra_data）
+            file_content: 文件解析后的文本内容（用于 AI 分析）
+            file_bytes: 文件原始字节流（用于保存文件）
         
         Returns:
             MessageModel: 保存的消息对象
         """
         try:
-            # 🔥 如果有文件内容，保存到 extra_data
+            # 🔥 如果有文件字节流，保存文件并生成 URL
             extra_data = None
-            if file_content:
+            if file_bytes and file_name:
+                # 保存文件到服务器
+                file_url = self._save_file_to_server(file_bytes, file_name)
+                
+                extra_data = {
+                    "file_url": file_url,  # 文件访问 URL
+                    "file_type": file_type,
+                    "file_name": file_name,
+                    "file_size": file_size
+                }
+                
+                # 如果有解析内容（文档），也保存到 extra_data
+                if file_content:
+                    extra_data["parsed_content"] = file_content
+                
+                logger.info(f"用户上传了文件: {file_name}, URL: {file_url}, 有解析内容: {file_content is not None}")
+                
+            elif file_content:
+                # 向后兼容：如果只有 file_content 没有 file_bytes
                 extra_data = {
                     "file_content": file_content,
                     "file_type": file_type,
                     "file_name": file_name
                 }
-                logger.info(f"用户上传了文件: {file_name}, 内容长度: {len(file_content)}")
+                logger.info(f"用户上传了文件（仅内容）: {file_name}, 内容长度: {len(file_content)}")
             
             message = MessageModel(
                 uuid=str(uuid_module.uuid4()),
@@ -155,17 +185,49 @@ class MessageService:
                 file_type=file_type,
                 file_name=file_name,
                 file_size=file_size,
-                extra_data=extra_data,  # 🔥 保存文件内容到 extra_data
+                extra_data=extra_data,  # 🔥 保存文件 URL 到 extra_data
                 status=1,  # 1.已发送
                 send_at=datetime.now()
             )
             await message.insert()
             
-            logger.info(f"用户消息已保存: {message.uuid}, session: {session_id}, has_file={file_content is not None}")
+            logger.info(f"用户消息已保存: {message.uuid}, session: {session_id}, has_file={file_bytes is not None or file_content is not None}")
             return message
             
         except Exception as e:
             logger.error(f"保存用户消息失败: {e}", exc_info=True)
+            raise
+    
+    def _save_file_to_server(self, file_bytes: bytes, original_filename: str) -> str:
+        """
+        保存文件到服务器，并返回访问 URL
+        
+        Args:
+            file_bytes: 文件字节流
+            original_filename: 原始文件名
+        
+        Returns:
+            文件访问 URL（相对路径）
+        """
+        try:
+            # 生成唯一文件名（保留原始扩展名）
+            extension = PathlibPath(original_filename).suffix
+            saved_filename = f"{uuid_module.uuid4()}{extension}"
+            file_path = os.path.join(MESSAGE_FILES_DIR, saved_filename)
+            
+            # 保存文件
+            with open(file_path, "wb") as f:
+                f.write(file_bytes)
+            
+            # 构建访问 URL（相对路径）
+            file_url = f"/uploads/message_files/{saved_filename}"
+            
+            logger.info(f"文件已保存: {file_path} ({len(file_bytes)} 字节) -> URL: {file_url}")
+            
+            return file_url
+            
+        except Exception as e:
+            logger.error(f"保存文件失败: {original_filename}, error={e}", exc_info=True)
             raise
     
     async def _get_session_history(self, session_id: str) -> List[Dict[str, Any]]:
@@ -320,6 +382,157 @@ class MessageService:
         except Exception as e:
             logger.error(f"生成 AI 回复失败: {e}", exc_info=True)
             return "抱歉，我现在无法回答您的问题，请稍后再试。"
+    
+    async def _analyze_image_stream(
+        self,
+        image_bytes: bytes,
+        filename: str
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        流式分析图片内容（OCR + LLaVA）
+        
+        Args:
+            image_bytes: 图片字节流
+            filename: 文件名
+        
+        Yields:
+            Dict: 分析进度事件
+                - event: 事件类型
+                - data: 事件数据
+        """
+        try:
+            from internal.service.image_service import image_service
+            from PIL import Image
+            import io
+            
+            # 获取图片基本信息
+            image = Image.open(io.BytesIO(image_bytes))
+            image_info = {
+                "width": image.width,
+                "height": image.height,
+                "format": image.format or "Unknown"
+            }
+            
+            result = {
+                "ocr_text": "",
+                "vision_description": "",
+                "image_info": image_info,
+                "combined_content": ""
+            }
+            
+            # 1. OCR 文字识别
+            yield {
+                "event": "thought",
+                "data": {
+                    "content": "📝 正在识别图片中的文字（OCR）...\n"
+                }
+            }
+            
+            try:
+                ocr_text = image_service._ocr_image(image_bytes, filename)
+                result["ocr_text"] = ocr_text
+                
+                if ocr_text and ocr_text != "（图片中未识别到文字内容）":
+                    # 输出识别到的文字内容
+                    yield {
+                        "event": "thought",
+                        "data": {
+                            "content": f"✅ OCR 识别完成，识别到文字：\n```\n{ocr_text}\n```\n\n"
+                        }
+                    }
+                else:
+                    yield {
+                        "event": "thought",
+                        "data": {
+                            "content": "⚠️ 图片中未识别到文字内容\n\n"
+                        }
+                    }
+            except Exception as e:
+                logger.error(f"OCR 识别失败: {e}")
+                yield {
+                    "event": "thought",
+                    "data": {
+                        "content": f"⚠️ OCR 识别失败: {str(e)}\n\n"
+                    }
+                }
+            
+            # 2. LLaVA 多模态图片内容识别（流式输出）
+            yield {
+                "event": "thought",
+                "data": {
+                    "content": "🤖 正在使用 LLaVA 分析图片内容（物体、场景识别）...\n\n"
+                }
+            }
+            
+            try:
+                vision_desc_full = ""
+                
+                # 流式输出 LLaVA 分析结果
+                for chunk in image_service._llava_analyze_stream(image_bytes, filename):
+                    vision_desc_full += chunk
+                    # 将 LLaVA 的实际描述内容流式输出
+                    yield {
+                        "event": "thought",
+                        "data": {
+                            "content": chunk
+                        }
+                    }
+                
+                result["vision_description"] = vision_desc_full
+                
+                # 分析完成提示
+                yield {
+                    "event": "thought",
+                    "data": {
+                        "content": f"\n\n✅ 图片分析完成\n\n"
+                    }
+                }
+                
+            except Exception as e:
+                logger.error(f"LLaVA 分析失败: {e}")
+                yield {
+                    "event": "thought",
+                    "data": {
+                        "content": f"⚠️ 图片内容识别失败: {str(e)}\n\n"
+                    }
+                }
+            
+            # 3. 综合内容描述
+            combined_parts = []
+            
+            if result["vision_description"]:
+                combined_parts.append(f"【图片内容 - LLaVA 分析】\n{result['vision_description']}")
+            
+            if result["ocr_text"] and result["ocr_text"] != "（图片中未识别到文字内容）":
+                combined_parts.append(f"【图片中的文字 - OCR 识别】\n{result['ocr_text']}")
+            
+            if not combined_parts:
+                combined_parts.append("（图片分析未得到有效信息）")
+            
+            result["combined_content"] = "\n\n".join(combined_parts)
+            
+            logger.info(f"图片分析完成: OCR={len(result['ocr_text'])} 字符, LLaVA={len(result['vision_description'])} 字符")
+            
+            # 返回完整结果
+            yield {
+                "event": "image_analysis_complete",
+                "data": result
+            }
+            
+        except Exception as e:
+            logger.error(f"图片分析失败: {filename}, error={e}", exc_info=True)
+            yield {
+                "event": "thought",
+                "data": {
+                    "content": f"❌ 图片分析失败：{str(e)}"
+                }
+            }
+            yield {
+                "event": "image_analysis_complete",
+                "data": {
+                    "combined_content": f"（图片分析失败：{str(e)}）"
+                }
+            }
     
     async def _generate_ai_reply_stream(
         self,
@@ -756,16 +969,16 @@ AI回答：{ai_answer[:200]}...
         file_name: Optional[str] = None,
         file_size: Optional[str] = None,
         file_content: Optional[str] = None,
-        show_thinking: bool = False,
-        enhanced_content: Optional[str] = None
+        file_bytes: Optional[bytes] = None,
+        show_thinking: bool = False
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         发送消息（统一流式返回，支持文件内容）
         
         Args:
             content: 用户的原始问题（保存到数据库）
-            file_content: 文件原始内容（用于保存到 extra_data）
-            enhanced_content: 增强内容（包含文件内容，发送给 AI）
+            file_content: 文档文件内容（已解析，用于保存到 extra_data）
+            file_bytes: 图片文件字节流（未解析，将在此方法中流式处理）
             show_thinking: 是否显示思考过程（Thought/Action/Observation）
         
         Yields:
@@ -776,6 +989,7 @@ AI回答：{ai_answer[:200]}...
         事件类型：
             - session_created: 会话创建
             - user_message_saved: 用户消息保存完成
+            - image_analysis: 图片分析进度（流式输出）
             - thought: Agent 思考（仅当 show_thinking=True）
             - action: Agent 动作（仅当 show_thinking=True）
             - observation: 观察结果（仅当 show_thinking=True）
@@ -802,10 +1016,78 @@ AI回答：{ai_answer[:200]}...
                 }
             }
             
-            # 2. 保存用户消息（包含文件内容）
+            # 2. 🖼️ 如果是图片文件，先流式分析图片内容
+            enhanced_content = content  # 默认使用原始问题
+            
+            if file_bytes and file_name:
+                from pathlib import Path as PathlibPath
+                extension = PathlibPath(file_name).suffix.lower()
+                SUPPORTED_IMAGE_FORMATS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif'}
+                
+                if extension in SUPPORTED_IMAGE_FORMATS:
+                    # 图片文件：流式分析
+                    logger.info(f"🖼️ 开始流式分析图片: {file_name}")
+                    
+                    # 流式输出：开始分析
+                    yield {
+                        "event": "thought",
+                        "data": {
+                            "content": f"🖼️ 正在分析上传的图片：{file_name}"
+                        }
+                    }
+                    
+                    # 执行图片分析（使用异步迭代器流式输出）
+                    image_analysis_result = None
+                    async for analysis_event in self._analyze_image_stream(file_bytes, file_name):
+                        # 流式输出分析进度
+                        yield analysis_event
+                        # 最后一个事件包含完整结果
+                        if analysis_event.get("event") == "image_analysis_complete":
+                            image_analysis_result = analysis_event.get("data", {}).get("combined_content", "")
+                    
+                    # 分析完成后，构建增强内容
+                    if image_analysis_result:
+                        from PIL import Image
+                        import io
+                        image = Image.open(io.BytesIO(file_bytes))
+                        enhanced_content = f"""这是我上传的图片（文件名：{file_name}，尺寸：{image.width}x{image.height}）：
+
+{image_analysis_result}
+
+---
+
+我的问题：{content}"""
+                        logger.info(f"✅ 图片分析完成，增强内容长度: {len(enhanced_content)}")
+                        
+                        # 更新 file_content 用于保存到数据库
+                        file_content = image_analysis_result
+                else:
+                    # 文档文件：已在 Controller 层解析，直接构建增强内容
+                    if file_content:
+                        logger.info(f"📄 检测到文档文件: {file_name}，内容长度: {len(file_content)}")
+                        enhanced_content = f"""这是我上传的 {file_type.upper()} 文件（文件名：{file_name}）：
+
+{file_content}
+
+---
+
+我的问题：{content}"""
+                        logger.info(f"✅ 文档内容已加入增强内容，长度: {len(enhanced_content)}")
+            elif file_content:
+                # 如果没有 file_bytes 但有 file_content（向后兼容）
+                logger.info(f"📄 检测到文档内容（无 file_bytes），内容长度: {len(file_content)}")
+                enhanced_content = f"""这是我上传的文件：
+
+{file_content}
+
+---
+
+我的问题：{content}"""
+            
+            # 3. 保存用户消息（包含文件内容，如果是图片则包含分析结果）
             user_msg = await self._save_user_message(
                 session_id, content, user_id, send_name, send_avatar,
-                file_type, file_name, file_size, file_content
+                file_type, file_name, file_size, file_content, file_bytes
             )
             
             yield {
@@ -816,10 +1098,10 @@ AI回答：{ai_answer[:200]}...
                 }
             }
             
-            # 3. 获取会话历史
+            # 4. 获取会话历史
             history = await self._get_session_history(session_id)
             
-            # 4. 流式生成 AI 回复（收集额外数据）
+            # 5. 流式生成 AI 回复（收集额外数据）
             ai_reply_full = ""
             extra_data = {
                 "thoughts": [],
@@ -834,8 +1116,8 @@ AI回答：{ai_answer[:200]}...
             current_action_start = None
             answer_start = None
             
-            # 🔥 如果有文件上传，使用 enhanced_content（包含文件内容），否则使用原始 content
-            ai_input_content = enhanced_content if enhanced_content else content
+            # 🔥 使用 enhanced_content（包含文件内容）或原始 content
+            ai_input_content = enhanced_content
             logger.info(f"发送给 AI 的内容长度: {len(ai_input_content)}, 原始问题长度: {len(content)}")
             
             async for event_dict in self._generate_ai_reply_stream(session_id, user_id, ai_input_content, history):

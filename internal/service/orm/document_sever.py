@@ -46,25 +46,27 @@ class DocumentService:
         """
         try:
             from datetime import datetime
-            # 1. 生成唯一文件名
-            file_uuid = str(uuid_module.uuid4())
-            file_extension = Path(file.filename).suffix
-            new_filename = f"{file_uuid}{file_extension}"
+            # 1. 生成唯一文件名（使用 UUID 确保唯一性）
+            file_uuid = str(uuid_module.uuid4())  # 生成全局唯一标识符
+            file_extension = Path(file.filename).suffix  # 保留原始文件扩展名
+            new_filename = f"{file_uuid}{file_extension}"  # 格式：UUID.扩展名（如：a1b2c3d4-e5f6-7g8h-9i0j-k1l2m3n4o5p6.pdf）
             file_path = self.upload_dir / new_filename
             
-            # 2. 保存文件
+            logger.info(f"生成唯一文件名: {file.filename} → {new_filename}")
+            
+            # 2. 保存文件到服务器
             file_content = await file.read()
             with open(file_path, "wb") as f:
                 f.write(file_content)
             
             file_size = len(file_content)
-            logger.info(f"文件已保存: {file.filename} → {file_path}, 大小: {file_size} bytes")
+            logger.info(f"文件已保存: {file_path}, 大小: {file_size} bytes")
             
             # 3. 解析文档内容
-            from pkg.utils.document_utils import load_document
+            from internal.document_client.document_extract import extractor_manager
             
             try:
-                loaded_docs = load_document(str(file_path))
+                loaded_docs = extractor_manager.load_document(str(file_path))
                 parsed_content = "\n\n".join([doc["content"] for doc in loaded_docs])
                 page_count = len(loaded_docs)
                 logger.info(f"文档内容已解析: {file.filename}, 页数: {page_count}, 内容长度: {len(parsed_content)}")

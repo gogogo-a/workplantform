@@ -8,18 +8,23 @@ from fastapi import APIRouter, Query, Path, Request, Form, File, UploadFile
 from fastapi.responses import StreamingResponse
 from internal.dto.request import SendMessageRequest
 from internal.service.orm.message_sever import message_service
+from internal.service.image_service import image_service
 from api.v1.response_controller import json_response
 from pkg.middleware.auth import get_user_from_request
-from pkg.utils.document_utils import parse_document_content
+from internal.document_client.document_extract import extract_document_content
 from log import logger
 import json as json_module
 from typing import Optional
+from pathlib import Path as PathlibPath
 
 # 使用全局JWT中间件，不需要路由级别的dependencies
 router = APIRouter(
     prefix="/messages", 
     tags=["消息管理"]
 )
+
+# 支持的图片格式
+SUPPORTED_IMAGE_FORMATS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif'}
 
 
 @router.post("", summary="发送消息并获取 AI 回复（统一流式返回，支持文件上传）")
@@ -30,10 +35,10 @@ async def send_message(
     send_name: Optional[str] = Form(None, description="发送者昵称（可选）"),
     send_avatar: Optional[str] = Form(None, description="发送者头像URL（可选）"),
     show_thinking: str = Form("false", description="是否显示思考过程"),
-    file: Optional[UploadFile] = File(None, description="上传的文件（可选，支持 .pdf/.docx/.txt）")
+    file: Optional[UploadFile] = File(None, description="上传的文件（可选，支持文档和图片：.pdf/.docx/.pptx/.xlsx/.csv/.html/.txt/.md/.rtf/.epub/.json/.xml/.jpg/.jpeg/.png/.webp/.gif/.bmp/.tiff）")
 ):
     """
-    发送消息并自动获取 AI 智能回复（统一流式返回，支持文件上传）
+    发送消息并自动获取 AI 智能回复（统一流式返回，支持文件和图片上传）
     
     ⚠️ 调试模式：临时打印所有接收到的参数
     
@@ -43,14 +48,15 @@ async def send_message(
     - **send_name**: 发送者昵称（可选，使用token中的昵称）
     - **send_avatar**: 发送者头像URL（可选）
     - **show_thinking**: 是否显示思考过程（默认 False）
-    - **file**: 上传的文件（可选，支持 .pdf/.docx/.txt）
+    - **file**: 上传的文件（可选，支持文档和图片格式）
     
     **文件上传说明：**
     如果上传了文件，系统会：
-    1. 解析文件内容（支持 PDF、Word、TXT）
-    2. 在消息中添加文件类型提示："这是我上传的 xxx 文件..."
-    3. 将文件内容保存到消息的 extra_data 中
-    4. AI 会基于文件内容回答问题
+    1. **文档文件**（PDF、Word、PowerPoint 等）：解析文档内容，提取文字和表格
+    2. **图片文件**（JPG、PNG、WebP 等）：使用 OCR 识别图片中的文字 ⭐
+    3. 在消息中添加文件类型提示："这是我上传的 xxx 文件/图片..."
+    4. 将文件内容/识别结果保存到消息的 extra_data 中
+    5. AI 会基于文件内容/图片识别结果回答问题
     
     **返回格式：**
     统一使用 SSE（Server-Sent Events）流式返回
@@ -82,7 +88,7 @@ async def send_message(
     )
     ```
     
-    **使用示例（Python - 带文件）：**
+    **使用示例（Python - 带文档文件）：**
     ```python
     import requests
     
@@ -94,6 +100,23 @@ async def send_message(
                 "show_thinking": "true"
             },
             files={"file": ("document.pdf", f, "application/pdf")},  # 注意：字段名是 'file'
+            headers={"Authorization": "Bearer <token>"},
+            stream=True
+        )
+    ```
+    
+    **使用示例（Python - 带图片文件）：** ⭐
+    ```python
+    import requests
+    
+    with open("screenshot.png", "rb") as f:
+        response = requests.post(
+            "http://localhost:8000/messages",
+            data={
+                "content": "这张图片里有什么内容？帮我识别一下",
+                "show_thinking": "false"
+            },
+            files={"file": ("screenshot.png", f, "image/png")},  # 支持 jpg/png/webp 等
             headers={"Authorization": "Bearer <token>"},
             stream=True
         )
@@ -122,50 +145,40 @@ async def send_message(
         user_id = current_user.get("user_id")
         user_nickname = current_user.get("nickname", "用户")
         
-        # 🔥 Controller 层职责：文件解析
+        # 🔥 Controller 层职责：文件读取（不做解析，交给 Service 层流式处理）
         file_content = None
         file_type = None
         file_name = None
         file_size = None
-        enhanced_content = content
+        file_bytes = None
         
         # 处理文件上传
         if file:
             logger.info(f"检测到文件上传: {file.filename}, content_type={file.content_type}")
             
             try:
-                # 1. 读取文件
+                # 1. 读取文件字节流
                 file_bytes = await file.read()
                 file_size = str(len(file_bytes))
                 file_name = file.filename
                 
-                # 2. 解析文件内容（Controller 层职责）
-                file_content = parse_document_content(file_bytes, file_name)
+                # 2. 确定文件类型（自动从扩展名推断）
+                extension = PathlibPath(file_name).suffix.lower()
+                file_type = extension[1:] if extension else 'file'
                 
-                # 3. 确定文件类型
-                if file_name.endswith('.pdf'):
-                    file_type = 'pdf'
-                elif file_name.endswith(('.docx', '.doc')):
-                    file_type = 'docx'
-                elif file_name.endswith('.txt'):
-                    file_type = 'txt'
+                # 3. 判断是图片还是文档
+                if extension in SUPPORTED_IMAGE_FORMATS:
+                    # 🖼️ 图片文件：不在这里处理，传递给 Service 层流式处理
+                    logger.info(f"🖼️ 检测到图片文件: {file_name}，将在 Service 层流式分析")
                 else:
-                    file_type = 'file'
-                
-                # 4. 构建增强内容（包含文件提示）
-                enhanced_content = f"""这是我上传的 {file_type.upper()} 文件（文件名：{file_name}）：
-
-{file_content}
-
----
-
-我的问题：{content}"""
-                
-                logger.info(f"文件解析成功: type={file_type}, size={file_size}, content_length={len(file_content)}")
+                    # 📄 文档文件：立即解析（文档解析不需要流式）
+                    logger.info(f"📄 检测到文档文件，提取文本内容")
+                    file_content = extract_document_content(file_bytes, file_name)
+                    logger.info(f"✅ 文档解析成功: type={file_type}, size={file_size}, content_length={len(file_content)}")
                 
             except Exception as e:
-                logger.error(f"文件解析失败: {e}", exc_info=True)
-                return json_response(f"文件解析失败: {str(e)}", -1)
+                logger.error(f"文件处理失败: {e}", exc_info=True)
+                return json_response(f"文件处理失败: {str(e)}", -1)
         
         logger.info(f"收到发送消息请求: user={user_id}, nickname={user_nickname}, session={session_id}, show_thinking={show_thinking}, has_file={file is not None}")
         
@@ -181,9 +194,9 @@ async def send_message(
                     file_type=file_type,
                     file_name=file_name,
                     file_size=file_size,
-                    file_content=file_content,  # 🔥 文件内容（保存到 extra_data）
-                    show_thinking=show_thinking,
-                    enhanced_content=enhanced_content  # 🔥 增强内容（发给 AI）
+                    file_content=file_content,  # 🔥 文档内容（已解析）
+                    file_bytes=file_bytes,  # 🔥 图片字节流（未解析，Service 层流式处理）
+                    show_thinking=show_thinking
                 ):
                     # 格式化为 SSE 格式
                     event_type = event.get("event", "message")

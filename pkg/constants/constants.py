@@ -119,3 +119,8 @@ EMAIL_VERIFY_SSL = os.getenv("EMAIL_VERIFY_SSL", "False").lower() == "true"
 
 # ==================== 安全配置 ====================
 SECRET_KEY = os.getenv("SECRET_KEY", "default_secret_key_please_change_in_production")
+
+# ==================== 图片识别配置 ====================
+# 图片内容识别（使用 Ollama LLaVA）
+ENABLE_VISION = os.getenv("ENABLE_VISION", "true").lower() == "true"
+VISION_MODEL = os.getenv("VISION_MODEL", "llava:7b")

@@ -3,8 +3,24 @@
     <div class="detail-header">
       <el-button class="back-button" :icon="ArrowLeft" @click="goBack">返回</el-button>
       <h2 class="page-title">文档详情</h2>
-      <div class="header-actions" v-if="isAdmin">
-        <el-button type="danger" :icon="Delete" @click="handleDelete">
+      <div class="header-actions">
+        <!-- 所有用户都可以下载 -->
+        <el-button 
+          type="primary" 
+          :icon="Download" 
+          @click="handleDownload"
+          :loading="isDownloading"
+          :disabled="!document || !document.url"
+        >
+          {{ isDownloading ? '下载中...' : '下载文档' }}
+        </el-button>
+        <!-- 只有管理员可以删除 -->
+        <el-button 
+          v-if="isAdmin"
+          type="danger" 
+          :icon="Delete" 
+          @click="handleDelete"
+        >
           删除文档
         </el-button>
       </div>
@@ -238,7 +254,8 @@ import {
   FolderOpened,
   Reading,
   User,
-  Lock
+  Lock,
+  Download
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -247,6 +264,7 @@ const userStore = useUserStore()
 
 const loading = ref(false)
 const document = ref(null)
+const isDownloading = ref(false)
 
 // 判断是否为管理员
 const isAdmin = computed(() => userStore.userInfo.is_admin === 1)
@@ -323,6 +341,68 @@ const getStatusDescription = (status, chunkCount) => {
 // 返回
 const goBack = () => {
   router.back()
+}
+
+// 下载文档
+const handleDownload = async () => {
+  if (isDownloading.value) {
+    console.log('正在下载中，请勿重复点击')
+    return
+  }
+
+  if (!document.value || !document.value.url) {
+    ElMessage.warning('文档链接不可用')
+    return
+  }
+
+  try {
+    isDownloading.value = true
+
+    // 构建完整 URL
+    let fullUrl = document.value.url
+    if (!fullUrl.startsWith('http://') && !fullUrl.startsWith('https://')) {
+      const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+      fullUrl = `${baseURL}${fullUrl}`
+    }
+
+    console.log('开始下载文档:', fullUrl)
+
+    // 使用 fetch 下载文件，通过 headers 携带 token
+    const response = await fetch(fullUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${userStore.token}`
+      }
+    })
+
+    if (!response.ok) {
+      throw new Error(`下载失败: ${response.statusText}`)
+    }
+
+    // 获取文件 blob
+    const blob = await response.blob()
+
+    // 创建一个临时的 URL
+    const blobUrl = window.URL.createObjectURL(blob)
+
+    // 创建一个隐藏的 a 标签来触发下载
+    const link = window.document.createElement('a')
+    link.href = blobUrl
+    link.download = document.value.name || 'download'
+    window.document.body.appendChild(link)
+    link.click()
+
+    // 清理
+    window.document.body.removeChild(link)
+    window.URL.revokeObjectURL(blobUrl)
+
+    ElMessage.success('下载成功')
+  } catch (error) {
+    console.error('下载文档失败:', error)
+    ElMessage.error('下载失败: ' + error.message)
+  } finally {
+    isDownloading.value = false
+  }
 }
 
 // 删除文档

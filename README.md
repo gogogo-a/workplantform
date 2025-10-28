@@ -157,11 +157,49 @@
   - 智能设备选择（CPU/CUDA/MPS）
   - HuggingFace 离线模式支持 🆕
 
-#### 2.9 文档处理服务（`internal/document/document_processor.py`）
-- ✅ **多格式文档支持**
-  - `.txt`、`.pdf`、`.docx` 格式
-  - 基于 LangChain 的文档加载器
-  
+#### 2.9 文档提取与处理系统（`internal/document_client/document_extract/`）🆕 ⭐
+- ✅ **模块化文档提取架构**
+  - `BaseExtractor`: 抽象基类，定义统一接口
+  - `DocumentExtractorManager`: 单例管理器，统一入口
+  - 支持从文件路径或字节流提取内容
+  - 自动文件类型检测和提取器选择
+
+- ✅ **丰富的文件格式支持**
+  - **文本类**: `.txt`, `.md` (纯文本、Markdown)
+  - **文档类**: `.pdf`, `.docx`, `.pptx`, `.doc`, `.ppt` (支持新旧版本，**支持图片 OCR**) ⭐
+  - **表格类**: `.xlsx`, `.csv` (Excel、CSV)
+  - **网页类**: `.html` (HTML)
+  - **其他**: `.rtf`, `.epub`, `.json`, `.xml`
+
+- ✅ **旧版 Office 格式自动转换** 🆕 ⭐
+  - **`.doc` 格式**（Microsoft Word 97-2003）
+    - 使用 LibreOffice 自动转换为 `.docx`
+    - 转换后支持图片 OCR 识别
+    - 转换失败时自动降级为纯文本提取
+  - **`.ppt` 格式**（Microsoft PowerPoint 97-2003）
+    - 使用 LibreOffice 自动转换为 `.pptx`
+    - 转换后支持图片 OCR 识别
+    - 转换失败时给出友好提示
+  - **技术方案**: LibreOffice 命令行（`soffice --headless`）
+  - **转换时间**: 通常 1-3 秒
+  - **临时文件**: 自动清理转换后的临时文件
+
+- ✅ **OCR 图像文字识别** ⭐
+  - **PDF 提取器**: 使用 PyMuPDF 提取文本、图片、表格结构
+    - 自动检测图片区域并进行 OCR 识别
+    - 提取的图片文字直接加入内容
+    - 识别表格结构并标注
+  - **Word 提取器**: 使用 python-docx 提取文本、表格
+    - 解析嵌入图片并进行 OCR 识别
+    - 图片文字加入到段落内容
+  - **PowerPoint 提取器**: 使用 python-pptx 提取幻灯片内容
+    - 解析每页形状和文本框
+    - 嵌入图片进行 OCR 识别
+  - **OCR 引擎**: Tesseract OCR + pytesseract
+    - 支持中文和英文识别（chi_sim + eng）
+    - 自动图片预处理（灰度化、降噪）
+    - 失败时自动降级为纯文本提取
+
 - ✅ **文档处理流程**
   - `add_documents_to_mongodb`: 保存原始文档到 MongoDB，生成 UUID
   - `add_document_chunks_to_milvus`: 文档分割、向量化、存储到 Milvus
@@ -316,6 +354,18 @@ eventSource.addEventListener('done', (e) => {
   - **真正的流式**：LLM 生成一个字符，立即显示
   - **Agent + RAG 集成**：与 `test_full_rag_qa.py` 完全一致
 
+- ✅ **文档处理与 OCR 测试** 🆕 ⭐
+  - 支持上传包含图片的 PDF、Word、PowerPoint（新旧格式）
+  - **旧版格式自动转换**：`.doc` 和 `.ppt` 自动转换为新格式后处理
+  - 自动 OCR 识别图片文字并加入内容
+  - 支持批量文档上传（`POST /documents`）
+  - 权限控制（普通用户/管理员）
+  - 处理进度跟踪和 `extra_data` 记录
+  - **建议测试**：
+    - 上传扫描版 PDF 验证 OCR 效果
+    - 上传 `.doc` 文件验证自动转换和 OCR
+    - 上传 `.ppt` 文件验证自动转换和 OCR
+
 ### 5. 工具与服务
 
 #### 5.1 密码加密（`pkg/utils/password_utils.py`）✅ 🆕
@@ -407,7 +457,20 @@ eventSource.addEventListener('done', (e) => {
   - `requirements.txt`: 所有 Python 依赖
   - `.gitignore`: Git 忽略规则
   - `env_template.txt`: 环境变量模板
-  - `bcrypt`, `PyJWT`, `email-validator` 等新增依赖
+  - **核心依赖**: `bcrypt`, `PyJWT`, `email-validator`, `psutil`, `gputil`
+  - **文档处理依赖** 🆕 ⭐: 
+    - `PyMuPDF==1.23.8` (高级 PDF 提取)
+    - `python-docx`, `python-pptx` (Office 文档)
+    - `pandas`, `openpyxl` (Excel/CSV)
+    - `beautifulsoup4`, `lxml` (HTML)
+    - `striprtf`, `ebooklib` (RTF/EPUB)
+  - **OCR 依赖** 🆕 ⭐: 
+    - `pytesseract==0.3.10` (Python 接口)
+    - `Pillow==10.1.0` (图片处理)
+    - 需系统安装 Tesseract OCR 引擎
+  - **格式转换依赖** 🆕 ⭐:
+    - 需系统安装 LibreOffice（用于 `.doc` 和 `.ppt` 转换）
+    - 跨平台支持（macOS/Linux/Windows）
 
 - ✅ **环境配置**（`pkg/constants/constants.py`）
   - **统一配置管理**: 所有配置从 `.env` 加载
@@ -744,10 +807,18 @@ from sentence_transformers import SentenceTransformer  # HuggingFace 库
   - 针对中文优化，检索准确率高
   - 支持离线模式（HuggingFace 本地缓存）
 
-- **灵活的文档管理**
+- **强大的文档处理能力** 🆕 ⭐
+  - **丰富格式支持**：`.pdf`、`.docx`、`.pptx`、`.doc`、`.ppt`、`.xlsx`、`.csv`、`.html`、`.rtf`、`.epub`、`.json`、`.xml` 等
+  - **旧版格式智能转换** ⭐：
+    - `.doc` 自动转换为 `.docx`（转换后支持图片 OCR）
+    - `.ppt` 自动转换为 `.pptx`（转换后支持图片 OCR）
+    - 使用 LibreOffice 无界面转换（1-3秒）
+    - 转换失败自动降级处理
+  - **OCR 图片识别**：自动识别 PDF、Word、PPT 中的图片文字（Tesseract OCR）
+  - **表格结构识别**：PyMuPDF 自动检测和标注 PDF 表格
+  - **模块化架构**：统一的 `DocumentExtractorManager` 管理所有格式
   - MongoDB 存储文档元数据和原始内容
   - Milvus 存储向量和分块数据
-  - 支持 PDF、DOCX、TXT、Markdown
 
 ### 4. 🎯 分层架构设计
 - **单一职责原则**
@@ -783,10 +854,10 @@ from sentence_transformers import SentenceTransformer  # HuggingFace 库
   - `save_only_answer=True`：只保存问答（简洁）
   - `save_only_answer=False`：保存完整推理过程（调试）
 
-### 6. 🔐 完整的用户系统
+### 6. 🔐 完整的用户系统与权限控制
 - **安全认证**
   - bcrypt 密码加密（不可逆）
-  - JWT Token 认证
+  - JWT Token 认证（包含 `is_admin` 字段）
   - 全局中间件统一鉴权
   - 白名单机制（支持路径 + 方法精确匹配）
 
@@ -795,10 +866,19 @@ from sentence_transformers import SentenceTransformer  # HuggingFace 库
   - 邮箱验证码登录
   - 邮箱验证码注册
 
-- **权限管理**
+- **文档级权限管理** 🆕 ⭐
+  - 文档权限字段（`permission`: 0=普通用户可见，1=仅管理员可见）
+  - RAG 检索自动权限过滤
+    - 普通用户：只能检索 `permission=0` 的文档
+    - 管理员：可检索所有文档
+  - 旧文档自动兼容（默认视为 `permission=0`）
+  - 文档元数据记录上传者信息和处理时间
+
+- **用户角色管理**
   - 管理员/普通用户角色
   - 管理后台（用户管理、文档管理）
   - 基于 Token 的用户身份识别
+  - 权限信息在 JWT 中持久化
 
 ### 7. 🎨 现代化前端界面
 - **炫酷视觉效果**
@@ -839,12 +919,32 @@ from sentence_transformers import SentenceTransformer  # HuggingFace 库
   - API 接口测试（用户、文档、会话、消息）
   - 交互式 Demo（`test_full_rag_qa.py`、`test_message_api.py`）
 
-- **详细的日志系统**
+- **详细的日志系统** 🆕 ⭐
   - Loguru 日志框架
   - JSON 格式输出（NDJSON）
-  - 自动记录调用位置和 Stack Trace
+  - **精确定位**：自动记录文件路径和行号（IDE 可点击跳转）
+  - Stack Trace 支持
   - 双输出（控制台 + 文件）
-  - 按日期自动轮转
+  - 按日期自动轮转（`json_log/YY_MM_DD_log/*.json`）
+  - 日志级别：Debug, Info, Warn, Error, Fatal
+
+- **性能与资源监控** 🆕 ⭐
+  - **性能监控**（`internal/monitor/performance_monitor.py`）
+    - Embedding 性能：token 数量、耗时、tokens/秒、ms/10k tokens
+    - Milvus 搜索性能：检索耗时、结果数量
+    - LLM 性能：think/action/answer 各阶段耗时
+    - 自动计算性能指标（tokens_per_second、ms_per_10k_tokens）
+  - **资源监控**（`internal/monitor/resource_monitor.py`）
+    - 系统资源：CPU、内存、磁盘、GPU 使用率
+    - MongoDB 监控：连接数、操作统计、数据库大小
+    - Milvus 监控：向量数量、collection 统计
+    - 自动后台采集，不影响主业务
+  - **监控数据存储**
+    - 按日期和类型分类（`json_monitor/YY_MM_DD_monitor/*.json`）
+    - 支持 API 查询和统计分析
+  - **API 端点**
+    - `/logs/*` - 日志查询（错误日志、统计）
+    - `/monitors/*` - 监控数据查询（性能、资源、统计）
 
 ### 9. ⚡ 异步处理架构
 - **FastAPI 异步框架**
@@ -902,21 +1002,31 @@ from sentence_transformers import SentenceTransformer  # HuggingFace 库
 
 ## ⚠️ 当前限制与不足
 
-### 1. 文档处理限制
-- ❌ **文件格式支持有限**
-  - ✅ 支持：`.pdf`、`.docx`、`.txt`、`.md`
-  - ❌ 不支持：`.pptx`、`.xlsx`、`.csv`、`.html`、`.rtf` 等
-  - 建议：使用文档转换工具预处理为支持的格式
+### 1. 文档处理能力 ✅ 🆕 ⭐
+- ✅ **文件格式支持丰富**
+  - ✅ 已支持：`.pdf`、`.docx`、`.pptx`、`.doc`、`.ppt`、`.txt`、`.md`、`.xlsx`、`.csv`、`.html`、`.rtf`、`.epub`、`.json`、`.xml`
+  - ✅ **旧版格式自动转换**：`.doc` 和 `.ppt` 使用 LibreOffice 自动转换，转换后支持图片 OCR
+  - ⚠️ 建议：复杂格式（如加密 PDF、密码保护文档）需预处理
+  - ⚠️ 依赖：旧版格式转换需要安装 LibreOffice
 
-- ❌ **图片内容无法识别**
-  - 当前只能处理文本内容，图片、图表、公式会被跳过
-  - 无多模态大模型（如 GPT-4V）集成
-  - 建议：对于包含重要图表的文档，手动添加文字描述
+- ✅ **图片内容 OCR 识别**（已实现）⭐
+  - PDF、Word、PowerPoint 中的图片自动 OCR 识别
+  - 使用 Tesseract OCR 引擎（中英文）
+  - 提取的文字直接加入文档内容
+  - ⚠️ 限制：
+    - 手写文字、艺术字体识别效果较差
+    - 图表、公式、复杂排版可能识别不准
+    - 低分辨率图片识别效果有限
+  - 建议：重要图表可手动添加文字说明
 
-- ⚠️ **PDF 处理限制**
-  - 扫描版 PDF（图片 PDF）无法识别文字
-  - 复杂排版可能导致文本提取混乱
-  - 建议：使用 OCR 工具预处理或转换为可编辑的 PDF
+- ⚠️ **PDF 处理优化**（已改进）
+  - ✅ 使用 PyMuPDF 进行高质量文本提取
+  - ✅ 自动检测并识别图片区域（OCR）
+  - ✅ 识别表格结构并标注
+  - ⚠️ 限制：
+    - 扫描版 PDF 依赖 OCR 质量（需清晰图片）
+    - 极复杂排版可能提取顺序混乱
+  - 建议：扫描版 PDF 确保图片清晰度 ≥ 300 DPI
 
 ### 2. 功能限制
 - ❌ **无网络搜索工具**
@@ -957,26 +1067,32 @@ from sentence_transformers import SentenceTransformer  # HuggingFace 库
   - 建议：使用多语言模型（如 `multilingual-e5-large`）
 
 ### 5. 安全与权限
-- ⚠️ **JWT 认证较简单**
+- ✅ **JWT 认证完善** 🆕
   - 使用全局中间件 + 白名单机制
-  - 无 Token 刷新机制（Refresh Token）
-  - 无 IP 白名单或访问频率限制
-  - 建议：生产环境需加强安全策略
+  - JWT 包含 `is_admin` 字段
+  - 基于角色的权限控制
+  - ⚠️ 建议：生产环境加入 Token 刷新、IP 白名单、访问频率限制
 
-- ⚠️ **文档权限管理简单**
-  - 当前所有用户共享知识库
-  - 无文档级别的访问控制
-  - 计划：实现基于角色的文档权限（RBAC）
+- ✅ **文档级权限管理** 🆕 ⭐
+  - 文档权限字段（0=普通用户可见，1=仅管理员可见）
+  - RAG 检索自动权限过滤
+  - 旧文档自动兼容
+  - ⚠️ 建议：扩展为更细粒度的 RBAC（部门、项目级别）
 
 ### 6. 监控与运维
-- ❌ **无系统监控**
-  - 缺少性能监控（响应时间、错误率）
-  - 缺少资源监控（CPU、内存、GPU）
-  - 建议：集成 Prometheus + Grafana
+- ✅ **系统监控已实现** 🆕 ⭐
+  - 性能监控：Embedding、Milvus、LLM 各阶段耗时
+  - 资源监控：CPU、内存、GPU、MongoDB、Milvus
+  - 自动计算性能指标（tokens/秒、ms/10k tokens）
+  - API 查询和统计分析
+  - ⚠️ 建议：集成 Prometheus + Grafana 可视化
 
-- ❌ **无日志分析**
-  - 日志以 JSON 格式存储，但无可视化分析
-  - 建议：使用 ELK Stack（Elasticsearch + Logstash + Kibana）
+- ✅ **日志系统完善** 🆕 ⭐
+  - 日志精确定位（文件路径 + 行号，IDE 可点击跳转）
+  - JSON 格式存储（NDJSON）
+  - 按日期和级别自动分类
+  - API 查询和错误统计
+  - ⚠️ 建议：使用 ELK Stack 进行大规模日志分析
 
 ### 7. 扩展性
 - ⚠️ **单机部署**
@@ -1003,14 +1119,24 @@ from sentence_transformers import SentenceTransformer  # HuggingFace 库
 - ✅ `PATCH /users/set-admin`: 设置管理员
 - ✅ `POST /users/email-code`: 发送邮箱验证码
 
-##### 1.2 文档管理 API（`document_controller.py`）✅
-- ✅ `POST /documents`: 高级文档上传
+##### 1.2 文档管理 API（`document_controller.py`）✅ 🆕
+- ✅ `POST /documents`: **批量文档上传** ⭐
+  - 支持单个或多个文件上传
+  - 所有文件共享同一个 `permission` 设置
+  - 文档权限控制（0=普通用户可见，1=仅管理员可见）
+  - 自动记录上传者信息（user_id、nickname）
   - 保存到 MongoDB 和 Milvus
   - 自动向量化和分块
-  - 支持全文检索
+  - Milvus 元数据包含 `permission` 字段
+  - 单文件返回：兼容旧格式
+  - 多文件返回：批量结果（成功/失败统计）
 - ✅ `GET /documents`: 获取文档列表（分页、关键词搜索）
+  - 返回文档基本信息和权限
 - ✅ `GET /documents/{document_id}`: 获取文档详情
+  - 返回完整文档信息
+  - 包含 `permission`、`extra_data`（上传者、处理时间）
 - ✅ `DELETE /documents/{document_id}`: 删除文档
+  - 同时删除 MongoDB、Milvus、物理文件
 
 ##### 1.3 会话管理 API（`session_controller.py`）✅
 - ✅ `GET /sessions`: 获取会话列表（分页）
@@ -1020,11 +1146,37 @@ from sentence_transformers import SentenceTransformer  # HuggingFace 库
 ##### 1.4 消息管理 API（`message_controller.py`）✅ 🌟
 - ✅ `POST /messages`: **流式 AI 对话**（SSE）
   - **真正的流式输出**（Token-by-Token）
-  - **Agent + RAG 检索**（自动调用知识库）
+  - **Agent + RAG 检索**（自动调用知识库，权限过滤）
   - **思考过程可选**（`show_thinking` 参数）
   - **自动创建会话**（不提供 `session_id` 时）
   - **实时推理展示**（Thought → Action → Observation → Answer）
+  - **文件上传支持**（聊天中上传文档）
 - ✅ `GET /messages/{session_id}`: 获取会话的所有消息（分页）
+
+##### 1.5 日志管理 API（`log_controller.py`）✅ 🆕
+- ✅ `GET /logs/errors`: 获取错误日志
+  - 按日期查询
+  - 分页支持
+- ✅ `GET /logs/dates`: 获取可用日志日期列表
+- ✅ `GET /logs/statistics`: 获取错误统计
+  - 总错误数、今日错误数
+  - 错误率、最近错误
+  - 按级别和小时分布统计
+
+##### 1.6 监控管理 API（`monitor_controller.py`）✅ 🆕
+- ✅ `GET /monitors/performance/{monitor_type}`: 获取性能监控数据
+  - 支持类型：embedding、milvus_search、llm_think、llm_action、llm_answer、llm_total
+  - 按日期查询、分页支持
+- ✅ `GET /monitors/resource`: 获取资源监控数据
+  - 系统资源（CPU、内存、GPU）
+  - 服务资源（MongoDB、Milvus）
+- ✅ `GET /monitors/all`: 获取所有监控数据概览
+- ✅ `GET /monitors/dates`: 获取可用监控日期列表
+- ✅ `GET /monitors/types`: 获取所有监控类型列表
+- ✅ `GET /monitors/statistics`: 获取监控统计分析
+  - 性能指标：平均/最小/最大耗时
+  - 资源指标：平均/最小/最大使用率
+  - 最近记录
 
 #### 2. 统一响应格式 ✅
 ```python
@@ -1117,27 +1269,29 @@ data: {"session_id": "xxx"}
   - 翻译 API
   - 自定义 API 集成框架
 
-#### 2. 多模态与文档格式扩展 🆕 ⏳
-- ⏳ **多模态大模型集成**
+#### 2. 多模态与文档格式扩展 🆕 ✅ ⭐
+- ✅ **OCR 文字识别**（已实现）⭐
+  - ✅ Tesseract OCR 集成
+  - ✅ PDF 图片识别（PyMuPDF + pytesseract）
+  - ✅ Word 图片识别（python-docx + pytesseract）
+  - ✅ PowerPoint 图片识别（python-pptx + pytesseract）
+  - ✅ 中英文双语识别（chi_sim + eng）
+  - ✅ 自动图片预处理（灰度化、降噪）
+  - ⏳ 待完善：手写文字识别（需更高级 OCR 模型）
+
+- ✅ **扩展文件格式支持**（已实现）⭐
+  - ✅ 已支持：`.pdf`、`.docx`、`.pptx`、`.doc`、`.ppt`、`.txt`、`.md`、`.xlsx`、`.csv`、`.html`、`.rtf`、`.epub`、`.json`、`.xml`
+  - ✅ **旧版格式智能转换**：使用 LibreOffice 自动转换 `.doc` → `.docx`、`.ppt` → `.pptx`
+  - ✅ 模块化提取器架构（`internal/document_client/document_extract/`）
+  - ✅ 统一管理器（`DocumentExtractorManager`）
+  - ✅ 支持字节流和文件路径提取
+  - ✅ 转换后的文件支持图片 OCR 识别
+
+- ⏳ **多模态大模型集成**（计划中）
   - GPT-4V（OpenAI Vision）
   - Claude 3（Anthropic）
   - Qwen-VL（通义千问 Vision）
-  - 图片理解、图表分析、OCR
-
-- ⏳ **扩展文件格式支持**
-  - ✅ 当前支持：`.pdf`、`.docx`、`.txt`、`.md`
-  - ⏳ 计划支持：
-    - `.pptx`（PowerPoint）
-    - `.xlsx`、`.csv`（Excel）
-    - `.html`（网页）
-    - `.rtf`（富文本）
-    - `.epub`（电子书）
-
-- ⏳ **OCR 文字识别**
-  - 扫描版 PDF 识别
-  - 图片文字提取
-  - 手写文字识别
-  - 集成 Tesseract OCR 或 PaddleOCR
+  - 图片理解、图表分析、高级 OCR
 
 #### 3. 溯源系统
 - ⏳ **答案溯源**
@@ -1322,9 +1476,95 @@ data: {"session_id": "xxx"}
 python3.9 -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
-# 安装依赖
+# 安装 Python 依赖
 pip install -r requirements.txt
 ```
+
+#### 安装 Tesseract OCR（用于图片文字识别）⭐
+
+**macOS:**
+```bash
+# 使用 Homebrew 安装
+brew install tesseract
+
+# 安装中文语言包
+brew install tesseract-lang
+
+# 验证安装
+tesseract --version
+tesseract --list-langs  # 应该看到 chi_sim 和 eng
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install tesseract-ocr
+sudo apt install tesseract-ocr-chi-sim  # 简体中文
+sudo apt install tesseract-ocr-chi-tra  # 繁体中文
+
+# 验证安装
+tesseract --version
+tesseract --list-langs
+```
+
+**Windows:**
+1. 下载安装包：https://github.com/UB-Mannheim/tesseract/wiki
+2. 安装时勾选"中文语言包"
+3. 添加到 PATH：`C:\Program Files\Tesseract-OCR`
+4. 验证：`tesseract --version`
+
+**CentOS/RHEL:**
+```bash
+sudo yum install tesseract
+sudo yum install tesseract-langpack-chi_sim
+
+# 验证安装
+tesseract --version
+tesseract --list-langs
+```
+
+> 💡 **提示**: Tesseract OCR 用于识别 PDF、Word、PowerPoint 中的图片文字。如果不安装，图片内容将被跳过。
+
+#### 安装 LibreOffice（用于旧版 Office 格式转换）⭐
+
+为了支持 `.doc` 和 `.ppt` 等旧版 Office 格式，需要安装 LibreOffice：
+
+**macOS:**
+```bash
+# 使用 Homebrew 安装
+brew install --cask libreoffice
+
+# 验证安装
+soffice --version
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install libreoffice
+
+# 验证安装
+soffice --version
+```
+
+**CentOS/RHEL:**
+```bash
+sudo yum install libreoffice
+
+# 验证安装
+soffice --version
+```
+
+**Windows:**
+1. 下载安装包：https://www.libreoffice.org/download/
+2. 运行安装程序
+3. 添加到 PATH（通常自动完成）
+4. 验证：在命令行运行 `soffice --version`
+
+> 💡 **提示**: 
+> - LibreOffice 用于将 `.doc` 转换为 `.docx`，`.ppt` 转换为 `.pptx`，转换后可以支持图片 OCR。
+> - 如果不安装 LibreOffice，`.doc` 文件会降级为纯文本提取（不支持图片），`.ppt` 文件会提示用户手动转换。
+> - 转换过程自动进行，通常耗时 1-3 秒，转换后的临时文件会自动清理。
 
 ### 2. 配置环境变量
 
@@ -1527,9 +1767,11 @@ plantform/
 ├── api/                    # API 路由 ✅ 🆕
 │   └── v1/
 │       ├── user_info_controller.py   # 用户管理 API
-│       ├── document_controller.py    # 文档管理 API
+│       ├── document_controller.py    # 文档管理 API（批量上传）⭐
 │       ├── session_controller.py     # 会话管理 API
 │       ├── message_controller.py     # 消息管理 API（流式）
+│       ├── log_controller.py         # 日志管理 API 🆕
+│       ├── monitor_controller.py     # 监控管理 API 🆕
 │       ├── response_controller.py    # 统一响应格式
 │       └── __init__.py
 ├── internal/               # 核心业务逻辑 ✅
@@ -1556,11 +1798,18 @@ plantform/
 │   │       ├── message_response.py
 │   │       └── __init__.py
 │   ├── service/            # 业务逻辑层 ✅ 🆕
-│   │   └── orm/
-│   │       ├── user_info_sever.py    # 用户管理服务
-│   │       ├── document_sever.py     # 文档管理服务
-│   │       ├── session_sever.py      # 会话管理服务
-│   │       └── message_sever.py      # 消息管理服务（流式）
+│   │   ├── orm/            # 数据库服务
+│   │   │   ├── user_info_sever.py    # 用户管理服务
+│   │   │   ├── document_sever.py     # 文档管理服务（权限、批量）⭐
+│   │   │   ├── session_sever.py      # 会话管理服务
+│   │   │   └── message_sever.py      # 消息管理服务（流式、权限）⭐
+│   │   └── json_load/      # JSON 数据加载服务 🆕
+│   │       ├── log_sever.py          # 日志服务
+│   │       └── monitor_sever.py      # 监控服务
+│   ├── monitor/            # 监控系统 ✅ 🆕 ⭐
+│   │   ├── __init__.py
+│   │   ├── performance_monitor.py    # 性能监控（装饰器）
+│   │   └── resource_monitor.py       # 资源监控（后台线程）
 │   ├── http_sever/         # HTTP 服务 ✅ 🆕
 │   │   ├── app.py          # FastAPI 应用工厂
 │   │   └── routes.py       # 路由注册
@@ -1585,6 +1834,11 @@ plantform/
 │   │   ├── config_loader.py
 │   │   ├── document_processor.py
 │   │   ├── message_client.py
+│   │   ├── document_extract/  # 文档提取系统 ✅ 🆕 ⭐
+│   │   │   ├── __init__.py           # 导出管理器单例
+│   │   │   ├── base_extractor.py     # 抽象基类
+│   │   │   ├── extractors.py         # 具体提取器（PDF/Word/PPT/Excel/etc, 带 OCR）
+│   │   │   └── extractor_manager.py  # 统一管理器
 │   │   ├── channel/        # 内存队列
 │   │   └── Kafka/          # Kafka 客户端
 │   └── Kafka/              # Kafka 部署 ✅ 🆕
@@ -1608,8 +1862,23 @@ plantform/
 │   └── constants/          # 全局常量
 │       └── constants.py
 ├── log/                    # 日志系统 ✅ 🆕
-│   ├── logger.py           # Loguru 日志配置
+│   ├── logger.py           # Loguru 日志配置（精确定位）⭐
 │   └── json_log/           # JSON 日志目录（按日期）
+│       └── YY_MM_DD_log/   # 按日期分类
+│           ├── debug.json
+│           ├── info.json
+│           ├── warning.json
+│           ├── error.json
+│           └── fatal.json
+├── json_monitor/           # 监控数据目录 ✅ 🆕 ⭐
+│   └── YY_MM_DD_monitor/   # 按日期分类
+│       ├── embedding.json          # Embedding 性能
+│       ├── milvus_search.json      # Milvus 检索性能
+│       ├── llm_think.json          # LLM 思考阶段
+│       ├── llm_action.json         # LLM 动作阶段
+│       ├── llm_answer.json         # LLM 答案阶段
+│       ├── llm_total.json          # LLM 总耗时
+│       └── resource.json           # 资源监控
 ├── test/                   # 测试文件 ✅
 │   ├── test_mongodb.py
 │   ├── test_milvus.py
@@ -1782,3 +2051,25 @@ ollama run llama3.2
 - 避免重复代码：使用 `_normalize_chunk()` 统一处理不同模型返回值
 - 参数验证：禁止同时传递冲突参数（如 `user_message` 和 `messages`）
 - 依赖注入：使用参数传递依赖（如 `document_processor`），避免循环导入
+
+### 8. 权限控制与安全 🆕 ⭐
+- **文档权限**：上传文档时设置 `permission`（0/1）
+- **用户权限**：JWT 中的 `is_admin` 字段自动在 Agent 中使用
+- **权限过滤**：RAG 检索自动根据 `user_permission` 过滤文档
+- **向后兼容**：旧文档（无 `permission` 字段）默认视为 `permission=0`
+- **最佳实践**：
+  - 管理员文档（内部资料、敏感信息）设置 `permission=1`
+  - 公开文档（用户手册、FAQ）设置 `permission=0`
+  - 定期审查文档权限设置
+
+### 9. 性能监控与调优 🆕 ⭐
+- **自动监控**：使用 `@performance_monitor` 装饰器自动记录性能
+- **监控类型**：embedding、milvus_search、llm_think/action/answer
+- **资源监控**：后台线程自动采集系统和服务资源使用情况
+- **查看监控数据**：
+  - 文件：`json_monitor/YY_MM_DD_monitor/*.json`
+  - API：`GET /monitors/performance/{type}`、`GET /monitors/resource`
+- **性能优化建议**：
+  - 关注 `ms_per_10k_tokens` 指标（Embedding 性能）
+  - 监控 Milvus 搜索耗时（> 100ms 需优化索引）
+  - LLM 各阶段耗时分析（think/action/answer 占比）

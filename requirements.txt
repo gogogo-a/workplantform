@@ -23,18 +23,31 @@ ollama==0.1.6
 
 # Embedding 模型
 sentence-transformers==2.2.2
-transformers==4.41.2
+transformers==4.45.0        # 升级以支持 BLIP-2
 torch==2.2.2
-safetensors>=0.4.3
+safetensors==0.4.5          # 升级以支持新模型格式
+accelerate==0.28.0          # 模型自动设备映射（BLIP-2 需要）
 
 # Re-ranker 模型
 FlagEmbedding==1.2.10
 
 # 文档处理
-pypdf2==3.0.1
+PyMuPDF==1.23.8          # PDF 提取（支持图片和表格）⭐
+pypdf2==3.0.1            # PDF 备用方案
 python-docx==1.1.0
-docx2txt==0.9
+docx2txt
 python-multipart==0.0.6
+python-pptx==0.6.23      
+pandas==2.0.3            
+openpyxl==3.1.2          
+beautifulsoup4==4.12.3   # HTML, XML 解析
+lxml==5.1.0              # HTML/XML 解析器
+striprtf==0.0.26         # RTF 提取
+ebooklib==0.18           # EPUB 提取
+
+# OCR 图片识别
+pytesseract==0.3.10      # OCR 文字识别 ⭐
+Pillow==10.1.0           # 图像处理
 
 # 工具类
 python-dotenv==1.0.0

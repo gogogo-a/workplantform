@@ -11,12 +11,8 @@ from internal.document_client.config_loader import config
 from internal.embedding.embedding_service import embedding_service
 from internal.db.milvus import milvus_client
 from pkg.constants.constants import MILVUS_COLLECTION_NAME
-from pkg.utils.document_utils import (
-    load_document,
-    split_text,
-    get_file_info,
-    is_supported_file
-)
+from internal.document_client.document_extract import extractor_manager
+from internal.monitor import record_performance  # 🔥 导入性能监控
 
 
 class DocumentProcessor:
@@ -87,21 +83,21 @@ class DocumentProcessor:
             process_start_time = time.time()
             start_datetime = datetime.now()
             # 1. 验证文件
-            if not is_supported_file(file_path):
+            if not extractor_manager.is_supported(file_path):
                 return {
                     "success": False,
                     "message": f"不支持的文件类型: {Path(file_path).suffix}"
                 }
             
-            file_info = get_file_info(file_path)
+            file_info = extractor_manager.get_file_info(file_path)
             logger.info(f"开始处理文档: {file_info['name']}, UUID: {document_uuid}")
             
             # 2. 加载文档
-            loaded_docs = load_document(file_path)
+            loaded_docs = extractor_manager.load_document(file_path)
             full_content = "\n\n".join([doc["content"] for doc in loaded_docs])
             
             # 3. 分割文本
-            chunks = split_text(
+            chunks = extractor_manager.split_text(
                 text=full_content,
                 chunk_size=self.chunk_size,
                 chunk_overlap=self.chunk_overlap,
@@ -133,6 +129,24 @@ class DocumentProcessor:
             embedding_duration = time.time() - embedding_start_time
             
             logger.info(f"Embedding 生成完成: {len(embeddings)} 个向量, 耗时: {embedding_duration:.2f}秒")
+            
+            # 🔥 记录 Embedding 性能监控
+            total_text = "\n".join(texts)
+            text_length = len(total_text)
+            # 估算 token 数量（中英文混合：字符数 * 0.8）
+            token_count = int(text_length * 0.8)
+            
+            record_performance(
+                monitor_type="embedding",
+                operation=f"文档向量化_{file_info['name']}",
+                duration=embedding_duration,
+                token_count=token_count,  # 🔥 传入 token_count，系统会自动计算 tokens/s 和 ms/10k tokens
+                document_uuid=document_uuid,
+                filename=file_info['name'],
+                chunks_count=len(chunks),
+                vectors_count=len(embeddings),
+                text_length=text_length
+            )
             
             # 5. 准备 Milvus 数据
             texts = []
@@ -234,10 +248,12 @@ class DocumentProcessor:
             Dict: 处理结果
         """
         try:
+            import time  # 🔥 导入time模块
+            
             logger.info(f"开始处理文本，UUID: {document_uuid}")
             
             # 1. 分割文本
-            chunks = split_text(
+            chunks = extractor_manager.split_text(
                 text=text,
                 chunk_size=self.chunk_size,
                 chunk_overlap=self.chunk_overlap,
@@ -253,12 +269,34 @@ class DocumentProcessor:
                     "message": "文本分割后没有生成文本块"
                 }
             
-            # 2. 批量 Embedding
+            # 2. 批量 Embedding（记录时间）
+            embedding_start_time = time.time()
             texts = [chunk["content"] for chunk in chunks]
             embeddings = embedding_service.encode_documents(
                 documents=texts,
                 batch_size=self.embedding_config.get('batch_size', 32),
                 normalize=True
+            )
+            embedding_duration = time.time() - embedding_start_time
+            
+            logger.info(f"Embedding 生成完成: {len(embeddings)} 个向量, 耗时: {embedding_duration:.2f}秒")
+            
+            # 🔥 记录 Embedding 性能监控
+            total_text = "\n".join(texts)
+            text_length = len(total_text)
+            # 估算 token 数量（中英文混合：字符数 * 0.8）
+            token_count = int(text_length * 0.8)
+            
+            record_performance(
+                monitor_type="embedding",
+                operation=f"文本向量化_{document_uuid[:8]}",
+                duration=embedding_duration,
+                token_count=token_count,  # 🔥 传入 token_count，系统会自动计算 tokens/s 和 ms/10k tokens
+                document_uuid=document_uuid,
+                chunks_count=len(chunks),
+                vectors_count=len(embeddings),
+                text_length=text_length,
+                source="text_upload"  # 标记为文本上传
             )
             
             # 3. 准备 Milvus 元数据

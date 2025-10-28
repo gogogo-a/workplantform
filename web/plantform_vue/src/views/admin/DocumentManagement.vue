@@ -118,7 +118,7 @@
             :show-file-list="true"
             :on-change="handleFileSelect"
             :on-remove="handleFileRemove"
-            accept=".pdf,.doc,.docx,.txt"
+            accept=".pdf,.docx,.pptx,.doc,.ppt,.txt,.md,.xlsx,.csv,.html,.rtf,.epub,.json,.xml"
             multiple
             drag
           >
@@ -128,7 +128,7 @@
             </div>
             <template #tip>
               <div class="el-upload__tip">
-                支持 PDF、DOC、DOCX、TXT 格式，支持多文件上传，单个文件最大 1000MB
+                支持 PDF、Word、PPT、Excel、TXT、Markdown、HTML、EPUB、JSON、XML 等格式，支持多文件上传，单个文件最大 1000MB
               </div>
             </template>
           </el-upload>
@@ -279,15 +279,32 @@ const handleFileSelect = (file, fileList) => {
   }
   
   const allowedTypes = [
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'text/plain'
+    'application/pdf',                                                                      // PDF
+    'application/msword',                                                                   // DOC
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',            // DOCX
+    'application/vnd.ms-powerpoint',                                                       // PPT
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',          // PPTX
+    'application/vnd.ms-excel',                                                            // XLS
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',                  // XLSX
+    'text/plain',                                                                          // TXT
+    'text/markdown',                                                                       // MD
+    'text/csv',                                                                            // CSV
+    'text/html',                                                                           // HTML
+    'application/rtf',                                                                     // RTF
+    'application/epub+zip',                                                                // EPUB
+    'application/json',                                                                    // JSON
+    'application/xml',                                                                     // XML
+    'text/xml'                                                                             // XML (alternative)
   ]
   
-  // 验证文件类型
-  if (!allowedTypes.includes(file.raw.type)) {
-    ElMessage.error(`文件 ${file.name} 格式不支持，只支持 PDF、DOC、DOCX、TXT 格式`)
+  const allowedExtensions = ['.pdf', '.docx', '.pptx', '.doc', '.ppt', '.txt', '.md', '.xlsx', '.csv', '.html', '.rtf', '.epub', '.json', '.xml']
+  
+  // 验证文件类型（通过 MIME 类型或文件扩展名）
+  const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
+  const isValidType = allowedTypes.includes(file.raw.type) || allowedExtensions.includes(fileExtension)
+  
+  if (!isValidType) {
+    ElMessage.error(`文件 ${file.name} 格式不支持。支持的格式：PDF、Word、PPT、Excel、TXT、Markdown、HTML、EPUB、JSON、XML 等`)
     // 从 fileList 中移除这个文件
     const index = fileList.findIndex(f => f.uid === file.uid)
     if (index > -1) {

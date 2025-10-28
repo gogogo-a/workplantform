@@ -3,9 +3,11 @@ FastAPI 应用工厂
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from .routes import setup_routes
 from pkg.middleware.auth import JWTAuthMiddleware
 from log import logger
+import os
 
 
 def create_app() -> FastAPI:
@@ -40,6 +42,15 @@ def create_app() -> FastAPI:
     
     # ==================== 注册路由 ====================
     setup_routes(app)
+    
+    # ==================== 静态文件服务 ====================
+    # 挂载上传文件目录（文档、图片等）
+    uploads_dir = "uploads"
+    os.makedirs(uploads_dir, exist_ok=True)
+    
+    # 挂载静态文件目录，访问路径: /uploads/*
+    app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+    logger.info(f"✓ 静态文件服务已挂载: /uploads -> {uploads_dir}")
     
     # ==================== 根路由 ====================
     @app.get("/")

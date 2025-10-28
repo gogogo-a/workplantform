@@ -19,6 +19,17 @@ RUNNING_MODE=cpu
 TRANSFORMERS_OFFLINE=1
 HF_HUB_OFFLINE=1
 
+# 图片内容识别配置（使用 Ollama LLaVA）
+# 是否启用图片内容识别（物体、场景等）
+# true: 启用 LLaVA 模型进行图片识别（需要先运行: ollama pull llava:7b）
+# false: 禁用（使用简单的图片特征分析）
+ENABLE_VISION=true
+
+# 使用的视觉模型（Ollama）
+# 可选: llava:7b, llava:13b, llava:34b
+# 默认: llava:7b（推荐，平衡性能和速度）
+VISION_MODEL=llava:7b
+
 # ==================== 数据库配置 ====================
 
 # MongoDB 配置

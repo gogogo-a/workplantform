@@ -97,6 +97,7 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
 async def get_current_user(request: Request) -> Optional[dict]:
     """
     从请求中提取并验证JWT Token，返回用户信息
+    支持从Authorization请求头或URL参数中获取token
     
     Args:
         request: FastAPI Request对象
@@ -106,21 +107,24 @@ async def get_current_user(request: Request) -> Optional[dict]:
         None: 如果没有token或token无效
     """
     try:
-        # 从请求头获取Authorization
+        token = None
+        
+        # 1. 优先从请求头获取Authorization
         authorization: str = request.headers.get("Authorization")
         
-        if not authorization:
-            logger.debug("未找到Authorization请求头")
-            return None
+        if authorization and authorization.startswith("Bearer "):
+            # 提取token
+            token = authorization.replace("Bearer ", "")
+            logger.debug(f"从Authorization请求头提取到token: {token[:20]}...{token[-20:]}")
         
-        # 检查格式是否为 "Bearer <token>"
-        if not authorization.startswith("Bearer "):
-            logger.warning(f"Authorization格式错误: {authorization[:20]}...")
-            return None
-        
-        # 提取token
-        token = authorization.replace("Bearer ", "")
-        logger.debug(f"提取到token: {token[:20]}...{token[-20:]}")
+        # 2. 如果请求头中没有，尝试从URL参数获取（用于图片、文件访问）
+        if not token:
+            token = request.query_params.get("token")
+            if token:
+                logger.debug(f"从URL参数提取到token: {token[:20]}...{token[-20:]}")
+            else:
+                logger.debug("未找到Authorization请求头和URL参数中的token")
+                return None
         
         # 验证token
         payload = verify_token(token)

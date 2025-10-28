@@ -75,30 +75,97 @@
           </transition>
         </div>
 
-        <!-- 用户上传的文件（可点击查看内容） -->
+        <!-- 用户上传的文件（支持图片预览和文件下载） -->
         <div v-if="isUser && message.file_name" class="uploaded-file">
           <div 
             class="uploaded-file-card" 
-            :class="{ 'is-expanded': isFileExpanded }"
-            @click="toggleFileContent"
+            :class="{ 'is-expanded': isFileExpanded, 'is-image': isImageFile }"
           >
-            <div class="file-header">
-              <el-icon class="file-icon"><Document /></el-icon>
-              <div class="file-info">
-                <span class="file-name">{{ message.file_name }}</span>
-                <span class="file-size">{{ formatFileSize(message.file_size) }}</span>
+            <!-- 图片类型：直接显示预览 -->
+            <template v-if="isImageFile && fileUrl">
+              <div class="image-preview-container">
+                <img 
+                  :src="getFullFileUrl(fileUrl)" 
+                  :alt="message.file_name"
+                  class="image-preview"
+                  @click="handleImageClick"
+                />
+                <div class="image-overlay">
+                  <div class="image-info">
+                    <el-icon class="file-icon"><Picture /></el-icon>
+                    <span class="file-name">{{ message.file_name }}</span>
+                    <span class="file-size">{{ formatFileSize(message.file_size) }}</span>
+                  </div>
+                  <div class="image-actions">
+                    <el-button 
+                      type="primary" 
+                      size="small" 
+                      :icon="View"
+                      @click.stop="handleImageClick"
+                    >
+                      查看大图
+                    </el-button>
+                    <el-button 
+                      size="small" 
+                      :icon="Download"
+                      @click.stop="handleDownloadFile"
+                    >
+                      下载
+                    </el-button>
+                  </div>
+                </div>
               </div>
-              <el-icon class="toggle-icon" :class="{ 'is-expanded': isFileExpanded }">
-                <ArrowDown />
-              </el-icon>
-            </div>
-            <transition name="file-expand">
-              <div v-show="isFileExpanded" class="file-content">
-                <pre>{{ fileContent }}</pre>
+            </template>
+
+            <!-- 非图片文件：显示文件卡片 -->
+            <template v-else>
+              <div class="file-header" @click="toggleFileContent">
+                <el-icon class="file-icon"><Document /></el-icon>
+                <div class="file-info">
+                  <span class="file-name">{{ message.file_name }}</span>
+                  <span class="file-size">{{ formatFileSize(message.file_size) }}</span>
+                </div>
+                <el-button 
+                  v-if="fileUrl"
+                  size="small" 
+                  type="primary"
+                  :icon="Download"
+                  @click.stop="handleDownloadFile"
+                >
+                  下载文件
+                </el-button>
+                <el-icon 
+                  v-if="hasFileContent"
+                  class="toggle-icon" 
+                  :class="{ 'is-expanded': isFileExpanded }"
+                >
+                  <ArrowDown />
+                </el-icon>
               </div>
-            </transition>
+              <transition name="file-expand">
+                <div v-show="isFileExpanded && hasFileContent" class="file-content">
+                  <pre>{{ fileContent }}</pre>
+                </div>
+              </transition>
+            </template>
           </div>
         </div>
+
+        <!-- 图片查看对话框 -->
+        <el-dialog 
+          v-model="imageDialogVisible" 
+          :title="message.file_name"
+          width="80%"
+          class="image-dialog"
+        >
+          <div class="dialog-image-container">
+            <img 
+              :src="getFullFileUrl(fileUrl)" 
+              :alt="message.file_name"
+              class="dialog-image"
+            />
+          </div>
+        </el-dialog>
 
         <!-- 消息文本 -->
         <div class="message-text" v-html="formatMessage(message.content)"></div>
@@ -155,7 +222,8 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { User, Service, CopyDocument, RefreshRight, ArrowDown, MagicStick, Tools, View, Document, DocumentCopy, Right } from '@element-plus/icons-vue'
+import { useUserStore } from '@/store'
+import { User, Service, CopyDocument, RefreshRight, ArrowDown, MagicStick, Tools, View, Document, DocumentCopy, Right, Picture, Download } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 const props = defineProps({
@@ -171,6 +239,7 @@ const props = defineProps({
 
 const emit = defineEmits(['regenerate'])
 const router = useRouter()
+const userStore = useUserStore()
 
 const isUser = props.message.role === 'user'
 const isThinkingExpanded = ref(true) // 默认展开思考过程
@@ -219,17 +288,145 @@ const expandObservationFull = () => {
 
 // 文件展开/折叠
 const isFileExpanded = ref(false)
+const imageDialogVisible = ref(false)
+const isDownloading = ref(false) // 下载状态锁
+
 const toggleFileContent = () => {
-  isFileExpanded.value = !isFileExpanded.value
+  // 只有当有文件内容时才允许展开
+  if (hasFileContent.value) {
+    isFileExpanded.value = !isFileExpanded.value
+  }
 }
 
-// 文件内容（从 extra_data 获取）
+// 文件URL（从 extra_data 获取）
+const fileUrl = computed(() => {
+  if (props.message.extra_data && props.message.extra_data.file_url) {
+    return props.message.extra_data.file_url
+  }
+  return null
+})
+
+// 文件类型（从 extra_data 或 file_type 获取）
+const fileType = computed(() => {
+  if (props.message.extra_data && props.message.extra_data.file_type) {
+    return props.message.extra_data.file_type.toLowerCase()
+  }
+  if (props.message.file_type) {
+    return props.message.file_type.toLowerCase()
+  }
+  return ''
+})
+
+// 判断是否为图片文件
+const isImageFile = computed(() => {
+  const imageTypes = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif']
+  return imageTypes.includes(fileType.value)
+})
+
+// 文件内容（从 extra_data 获取，用于文本文件预览）
 const fileContent = computed(() => {
   if (props.message.extra_data && props.message.extra_data.file_content) {
     return props.message.extra_data.file_content
   }
   return '文件内容不可用'
 })
+
+// 是否有文件内容可以展开
+const hasFileContent = computed(() => {
+  return props.message.extra_data && 
+         props.message.extra_data.file_content && 
+         props.message.extra_data.file_content !== '文件内容不可用'
+})
+
+// 获取完整的文件URL（添加API基础路径和token）
+const getFullFileUrl = (url) => {
+  if (!url) return ''
+  
+  let fullUrl = url
+  
+  // 如果不是完整URL，拼接API基础路径
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+    fullUrl = `${baseURL}${url}`
+  }
+  
+  // 添加token参数
+  const token = userStore.token
+  if (token) {
+    const separator = fullUrl.includes('?') ? '&' : '?'
+    fullUrl = `${fullUrl}${separator}token=${encodeURIComponent(token)}`
+  }
+  
+  return fullUrl
+}
+
+// 处理图片点击（显示大图）
+const handleImageClick = () => {
+  imageDialogVisible.value = true
+}
+
+// 处理文件下载
+const handleDownloadFile = async () => {
+  // 防止重复下载
+  if (isDownloading.value) {
+    console.log('正在下载中，请勿重复点击')
+    return
+  }
+  
+  if (!fileUrl.value) {
+    ElMessage.warning('文件链接不可用')
+    return
+  }
+  
+  try {
+    isDownloading.value = true
+    
+    // 构建不带 token 的完整 URL（token 通过 headers 传递）
+    let fullUrl = fileUrl.value
+    if (!fullUrl.startsWith('http://') && !fullUrl.startsWith('https://')) {
+      const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+      fullUrl = `${baseURL}${fullUrl}`
+    }
+    
+    // 使用 fetch 下载文件，通过 headers 携带 token
+    const response = await fetch(fullUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${userStore.token}`
+      }
+    })
+    
+    if (!response.ok) {
+      throw new Error(`下载失败: ${response.statusText}`)
+    }
+    
+    // 获取文件 blob
+    const blob = await response.blob()
+    
+    // 创建一个临时的 URL
+    const blobUrl = window.URL.createObjectURL(blob)
+    
+    // 创建一个隐藏的 a 标签来触发下载
+    const link = document.createElement('a')
+    link.href = blobUrl
+    link.download = props.message.file_name || 'download'
+    document.body.appendChild(link)
+    link.click()
+    
+    // 清理
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(blobUrl)
+    
+    // 只在成功下载后显示一次提示
+    ElMessage.success('下载成功')
+  } catch (error) {
+    console.error('下载文件失败:', error)
+    ElMessage.error('下载失败: ' + error.message)
+  } finally {
+    // 释放下载锁
+    isDownloading.value = false
+  }
+}
 
 // 点击文档跳转到详情页
 const handleDocumentClick = (uuid) => {
@@ -568,12 +765,15 @@ const handleRegenerate = () => {
   background: rgba(99, 102, 241, 0.08);
   border: 1px solid rgba(99, 102, 241, 0.2);
   border-radius: 8px;
-  cursor: pointer;
   transition: all 0.3s ease;
   overflow: hidden;
 }
 
-.uploaded-file-card:hover {
+.uploaded-file-card:not(.is-image) {
+  cursor: pointer;
+}
+
+.uploaded-file-card:not(.is-image):hover {
   background: rgba(99, 102, 241, 0.12);
   border-color: rgba(99, 102, 241, 0.3);
 }
@@ -582,6 +782,75 @@ const handleRegenerate = () => {
   background: rgba(99, 102, 241, 0.12);
 }
 
+/* 图片预览容器 */
+.image-preview-container {
+  position: relative;
+  width: 100%;
+  max-width: 400px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.image-preview {
+  width: 100%;
+  height: auto;
+  display: block;
+  cursor: pointer;
+  transition: transform 0.3s ease;
+}
+
+.image-preview:hover {
+  transform: scale(1.02);
+}
+
+.image-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.8), transparent);
+  padding: 16px 12px;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.image-preview-container:hover .image-overlay {
+  opacity: 1;
+}
+
+.image-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.image-info .file-icon {
+  font-size: 18px;
+  color: var(--neon-purple);
+}
+
+.image-info .file-name {
+  flex: 1;
+  font-size: 13px;
+  color: #fff;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-info .file-size {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.image-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* 普通文件样式 */
 .file-header {
   display: flex;
   align-items: center;
@@ -621,6 +890,7 @@ const handleRegenerate = () => {
   color: var(--neon-purple);
   transition: transform 0.3s ease;
   flex-shrink: 0;
+  margin-left: 8px;
 }
 
 .file-header .toggle-icon.is-expanded {
@@ -662,6 +932,45 @@ const handleRegenerate = () => {
 .file-expand-leave-from {
   max-height: 400px;
   opacity: 1;
+}
+
+/* 图片查看对话框 */
+.dialog-image-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+  background: var(--bg-primary);
+}
+
+.dialog-image {
+  max-width: 100%;
+  max-height: 80vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+/* 对话框深色样式 */
+:deep(.image-dialog .el-dialog) {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+}
+
+:deep(.image-dialog .el-dialog__header) {
+  border-bottom: 1px solid var(--border-color);
+}
+
+:deep(.image-dialog .el-dialog__title) {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+:deep(.image-dialog .el-dialog__close) {
+  color: var(--text-tertiary);
+}
+
+:deep(.image-dialog .el-dialog__close:hover) {
+  color: var(--primary-color);
 }
 
 .documents-list {
@@ -797,4 +1106,5 @@ const handleRegenerate = () => {
   color: var(--primary-color);
 }
 </style>
+
 

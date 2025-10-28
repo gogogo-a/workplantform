@@ -1,5 +1,20 @@
 <template>
-  <div class="message-input">
+  <div 
+    class="message-input"
+    :class="{ 'is-dragging': isDragging }"
+    @drop.prevent="handleDrop"
+    @dragover.prevent="handleDragOver"
+    @dragleave.prevent="handleDragLeave"
+    @dragenter.prevent="handleDragEnter"
+  >
+    <!-- 拖拽提示遮罩 -->
+    <div v-if="isDragging" class="drag-overlay">
+      <div class="drag-hint">
+        <el-icon class="drag-icon"><Upload /></el-icon>
+        <p>释放以上传文件或图片</p>
+      </div>
+    </div>
+
     <div class="input-toolbar">
       <el-button
         text
@@ -18,20 +33,24 @@
       <input
         ref="fileInputRef"
         type="file"
-        accept=".pdf,.doc,.docx,.txt"
+        accept=".pdf,.docx,.pptx,.doc,.ppt,.txt,.md,.xlsx,.csv,.html,.rtf,.epub,.json,.xml,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif"
         style="display: none"
         @change="handleFileChange"
       />
+      
+      <span class="toolbar-hint">支持粘贴图片 (Ctrl+V) 和拖拽文件</span>
     </div>
 
     <div class="input-container">
       <el-input
+        ref="textareaRef"
         v-model="inputMessage"
         type="textarea"
         :rows="3"
-        placeholder="输入您的问题... (Shift + Enter 换行，Enter 发送)"
+        placeholder="输入您的问题... (Shift + Enter 换行，Enter 发送，Ctrl+V 粘贴图片)"
         :disabled="isSending"
         @keydown.enter="handleKeyDown"
+        @paste="handlePaste"
         class="message-textarea"
       />
       
@@ -79,6 +98,8 @@ const isSending = ref(false)
 const uploadedFiles = ref([]) // 暂存的文件列表
 const showThinking = ref(true) // 默认显示思考过程
 const fileInputRef = ref(null)
+const textareaRef = ref(null)
+const isDragging = ref(false) // 拖拽状态
 
 // 切换思考过程显示
 const handleToggleThinking = () => {
@@ -96,28 +117,8 @@ const handleFileChange = (event) => {
   const file = event.target.files[0]
   if (!file) return
   
-  // 验证文件类型（移除大小限制）
-  const allowedTypes = [
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'text/plain'
-  ]
-  
-  if (!allowedTypes.includes(file.type)) {
-    ElMessage.error('只支持 PDF、DOC、DOCX、TXT 格式的文件')
-    return
-  }
-  
-  // 暂存文件（保存原始 File 对象）
-  uploadedFiles.value.push({
-    name: file.name,
-    size: file.size,
-    type: file.type,
-    file: file // 保存原始文件对象
-  })
-  
-  ElMessage.success(`文件 ${file.name} 已添加`)
+  // 使用统一的验证函数
+  validateAndAddFile(file)
   
   // 清空 input，以便可以再次选择相同文件
   event.target.value = ''
@@ -167,6 +168,120 @@ const handleRemoveFile = (index) => {
   ElMessage.success('文件已移除')
 }
 
+// 验证并添加文件的通用函数
+const validateAndAddFile = (file) => {
+  // 验证文件类型（移除大小限制）
+  const allowedTypes = [
+    // 文档类型
+    'application/pdf',                                                                      // PDF
+    'application/msword',                                                                   // DOC
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',            // DOCX
+    'application/vnd.ms-powerpoint',                                                       // PPT
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',          // PPTX
+    'application/vnd.ms-excel',                                                            // XLS
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',                  // XLSX
+    'text/plain',                                                                          // TXT
+    'text/markdown',                                                                       // MD
+    'text/csv',                                                                            // CSV
+    'text/html',                                                                           // HTML
+    'application/rtf',                                                                     // RTF
+    'application/epub+zip',                                                                // EPUB
+    'application/json',                                                                    // JSON
+    'application/xml',                                                                     // XML
+    'text/xml',                                                                            // XML (alternative)
+    // 图片类型
+    'image/jpeg',                                                                          // JPG/JPEG
+    'image/png',                                                                           // PNG
+    'image/webp',                                                                          // WEBP
+    'image/gif',                                                                           // GIF
+    'image/bmp',                                                                           // BMP
+    'image/tiff'                                                                           // TIFF/TIF
+  ]
+  
+  const allowedExtensions = [
+    '.pdf', '.docx', '.pptx', '.doc', '.ppt', '.txt', '.md', '.xlsx', '.csv', 
+    '.html', '.rtf', '.epub', '.json', '.xml',
+    '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif'
+  ]
+  
+  // 验证文件类型（通过 MIME 类型或文件扩展名）
+  const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
+  const isValidType = allowedTypes.includes(file.type) || allowedExtensions.includes(fileExtension)
+  
+  if (!isValidType) {
+    ElMessage.error('支持的格式：PDF、Word、PPT、Excel、TXT、Markdown、HTML、EPUB、JSON、XML、图片（JPG/PNG/GIF/WEBP等）')
+    return false
+  }
+  
+  // 添加文件到列表
+  uploadedFiles.value.push({
+    name: file.name,
+    size: file.size,
+    type: file.type,
+    file: file // 保存原始文件对象
+  })
+  
+  ElMessage.success(`文件 ${file.name} 已添加`)
+  return true
+}
+
+// 粘贴事件处理
+const handlePaste = (event) => {
+  const items = event.clipboardData?.items
+  if (!items) return
+  
+  // 查找粘贴的文件（特别是图片）
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    
+    // 如果是图片类型
+    if (item.type.indexOf('image') !== -1) {
+      event.preventDefault() // 阻止默认粘贴行为
+      
+      const file = item.getAsFile()
+      if (file) {
+        // 为粘贴的图片生成文件名
+        const timestamp = new Date().getTime()
+        const extension = file.type.split('/')[1] || 'png'
+        const renamedFile = new File([file], `pasted-image-${timestamp}.${extension}`, { type: file.type })
+        
+        validateAndAddFile(renamedFile)
+      }
+      break
+    }
+  }
+}
+
+// 拖拽进入
+const handleDragEnter = (event) => {
+  isDragging.value = true
+}
+
+// 拖拽经过
+const handleDragOver = (event) => {
+  isDragging.value = true
+}
+
+// 拖拽离开
+const handleDragLeave = (event) => {
+  // 只有当离开整个 message-input 区域时才取消拖拽状态
+  if (event.target.className === 'message-input' || event.target.classList.contains('message-input')) {
+    isDragging.value = false
+  }
+}
+
+// 拖拽释放
+const handleDrop = (event) => {
+  isDragging.value = false
+  
+  const files = event.dataTransfer?.files
+  if (!files || files.length === 0) return
+  
+  // 处理拖拽的文件（只处理第一个文件）
+  const file = files[0]
+  validateAndAddFile(file)
+}
+
 // 暴露方法给父组件
 defineExpose({
   isSending
@@ -175,15 +290,92 @@ defineExpose({
 
 <style scoped>
 .message-input {
+  position: relative;
   background: var(--bg-secondary);
   border-top: 1px solid var(--border-color);
   padding: 16px;
+  transition: all 0.3s ease;
+}
+
+.message-input.is-dragging {
+  background: rgba(99, 102, 241, 0.05);
+  border-top-color: var(--primary-color);
+}
+
+/* 拖拽提示遮罩 */
+.drag-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(99, 102, 241, 0.1);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  border: 2px dashed var(--primary-color);
+  border-radius: 8px;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    border-color: var(--primary-color);
+    background: rgba(99, 102, 241, 0.1);
+  }
+  50% {
+    border-color: var(--neon-purple);
+    background: rgba(168, 85, 247, 0.15);
+  }
+}
+
+.drag-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px;
+  background: rgba(20, 25, 47, 0.9);
+  border-radius: 12px;
+  border: 1px solid var(--primary-color);
+}
+
+.drag-icon {
+  font-size: 48px;
+  color: var(--primary-color);
+  animation: bounce 1s ease-in-out infinite;
+}
+
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.drag-hint p {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .input-toolbar {
   display: flex;
+  align-items: center;
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.toolbar-hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  opacity: 0.7;
 }
 
 .thinking-button {

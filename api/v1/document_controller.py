@@ -22,7 +22,7 @@ async def upload_document(
     """
     上传文档并自动进行 Embedding 处理（支持批量上传）
     
-    - **files**: 文档文件列表（支持 .pdf, .docx, .txt）- 可以上传单个或多个文件
+    - **files**: 文档文件列表（支持 .pdf, .docx, .pptx, .doc, .ppt, .txt, .md, .xlsx, .csv, .html, .rtf, .epub, .json, .xml）- 可以上传单个或多个文件
     - **permission**: 文档权限（0=普通用户可见，1=仅管理员可见）- 所有文件共享此权限
     
     处理流程：
@@ -42,7 +42,11 @@ async def upload_document(
         logger.info(f"收到上传请求: 用户={user.get('nickname')}, 文件数={len(files)}, 权限={permission}")
         
         # 验证文件类型
-        allowed_extensions = ['.pdf', '.docx', '.doc', '.txt']
+        allowed_extensions = [
+            '.pdf', '.docx', '.pptx', '.doc', '.ppt', 
+            '.txt', '.md', '.xlsx', '.csv', '.html', 
+            '.rtf', '.epub', '.json', '.xml'
+        ]
         
         # 存储所有结果
         results = []
@@ -62,7 +66,7 @@ async def upload_document(
                     results.append({
                         "filename": file.filename,
                         "success": False,
-                        "message": f"不支持的文件类型: {file_ext}",
+                        "message": f"不支持的文件类型: {file_ext}，支持的类型: {', '.join(allowed_extensions)}",
                         "ret": -2
                     })
                     continue

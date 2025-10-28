@@ -1,17 +1,11 @@
 """
 工具函数包
+
+注意：document_utils 已废弃，请使用 internal.document_client.document_extract
 """
 from .email_service import EmailService, email_service
 from .password_utils import hash_password, verify_password
 from .jwt_utils import create_token, verify_token
-from .document_utils import (
-    load_document,
-    clean_text,
-    split_text,
-    get_file_info,
-    is_supported_file,
-    SUPPORTED_LOADERS
-)
 
 __all__ = [
     'EmailService', 
@@ -19,12 +13,6 @@ __all__ = [
     'hash_password',
     'verify_password',
     'create_token',
-    'verify_token',
-    'load_document',
-    'clean_text',
-    'split_text',
-    'get_file_info',
-    'is_supported_file',
-    'SUPPORTED_LOADERS'
+    'verify_token'
 ]
 
