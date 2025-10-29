@@ -169,6 +169,7 @@
   - **文档类**: `.pdf`, `.docx`, `.pptx`, `.doc`, `.ppt` (支持新旧版本，**支持图片 OCR**) ⭐
   - **表格类**: `.xlsx`, `.csv` (Excel、CSV)
   - **网页类**: `.html` (HTML)
+  - **图片类**: `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.gif` (图片理解 + OCR) ⭐
   - **其他**: `.rtf`, `.epub`, `.json`, `.xml`
 
 - ✅ **旧版 Office 格式自动转换** 🆕 ⭐
@@ -219,6 +220,32 @@
   - 可配置检索数量（默认5个）
   - Reranker 可开关
   - 自动去重，保证结果多样性
+  - **权限过滤**：自动根据用户权限（`is_admin`）过滤文档 🆕 ⭐
+
+#### 2.11 图像识别服务（`internal/service/image_service.py`）🆕 ⭐
+- ✅ **多模态图像理解**
+  - **LLaVA 集成**（通过 Ollama 部署）
+    - 本地运行的多模态大模型（`llava:7b`）
+    - 物体识别、场景理解、图表分析
+    - 支持 MPS（Apple Silicon）、CUDA、CPU
+    - 流式输出分析结果（实时展示思考过程）
+  
+- ✅ **OCR 文字识别**
+  - Tesseract OCR 引擎
+  - 中英文双语识别（chi_sim + eng）
+  - 自动图片预处理（灰度化、降噪）
+  - 识别结果直接加入内容
+  
+- ✅ **支持的图片格式**
+  - `.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.gif`
+  - 自动格式检测和处理
+  - Base64 编码传输
+  
+- ✅ **聊天中图片分析**
+  - 用户上传图片后自动分析
+  - OCR 提取文字 + LLaVA 理解图片内容
+  - 分析过程流式显示在 AI 思考中
+  - 结果保存在消息的 `extra_data` 字段
 
 ### 3. 🌟 **流式 AI 对话系统**（真正的实时流式）✅ 🆕
 
@@ -366,6 +393,19 @@ eventSource.addEventListener('done', (e) => {
     - 上传 `.doc` 文件验证自动转换和 OCR
     - 上传 `.ppt` 文件验证自动转换和 OCR
 
+- ✅ **图像识别与分析测试** 🆕 ⭐
+  - **聊天中上传图片**（`POST /messages`）
+    - 支持 JPG、PNG、WebP 等格式
+    - 自动 OCR 识别图片中的文字
+    - LLaVA 多模态分析（物体、场景识别）
+    - 分析过程流式显示在思考中
+    - 图片保存到服务器，生成访问 URL
+  - **建议测试**：
+    - 上传包含文字的图片（验证 OCR）
+    - 上传风景、物品照片（验证 LLaVA 识别）
+    - 上传图表、截图（验证综合分析）
+    - 观察思考过程中的实时流式分析
+
 ### 5. 工具与服务
 
 #### 5.1 密码加密（`pkg/utils/password_utils.py`）✅ 🆕
@@ -468,6 +508,10 @@ eventSource.addEventListener('done', (e) => {
     - `pytesseract==0.3.10` (Python 接口)
     - `Pillow==10.1.0` (图片处理)
     - 需系统安装 Tesseract OCR 引擎
+  - **多模态依赖** 🆕 ⭐:
+    - `ollama` (Python 客户端)
+    - 需系统安装 Ollama（用于 LLaVA 模型部署）
+    - 支持本地多模态模型（LLaVA、LLaMA 等）
   - **格式转换依赖** 🆕 ⭐:
     - 需系统安装 LibreOffice（用于 `.doc` 和 `.ppt` 转换）
     - 跨平台支持（macOS/Linux/Windows）
@@ -808,7 +852,7 @@ from sentence_transformers import SentenceTransformer  # HuggingFace 库
   - 支持离线模式（HuggingFace 本地缓存）
 
 - **强大的文档处理能力** 🆕 ⭐
-  - **丰富格式支持**：`.pdf`、`.docx`、`.pptx`、`.doc`、`.ppt`、`.xlsx`、`.csv`、`.html`、`.rtf`、`.epub`、`.json`、`.xml` 等
+  - **丰富格式支持**：`.pdf`、`.docx`、`.pptx`、`.doc`、`.ppt`、`.xlsx`、`.csv`、`.html`、`.rtf`、`.epub`、`.json`、`.xml`、图片格式等
   - **旧版格式智能转换** ⭐：
     - `.doc` 自动转换为 `.docx`（转换后支持图片 OCR）
     - `.ppt` 自动转换为 `.pptx`（转换后支持图片 OCR）
@@ -816,9 +860,15 @@ from sentence_transformers import SentenceTransformer  # HuggingFace 库
     - 转换失败自动降级处理
   - **OCR 图片识别**：自动识别 PDF、Word、PPT 中的图片文字（Tesseract OCR）
   - **表格结构识别**：PyMuPDF 自动检测和标注 PDF 表格
+  - **多模态图像理解** ⭐：
+    - LLaVA 集成（通过 Ollama 本地部署）
+    - 物体识别、场景理解、图表分析
+    - 流式输出分析过程，透明化 AI 思考
+    - 支持聊天中上传图片，自动 OCR + 多模态分析
   - **模块化架构**：统一的 `DocumentExtractorManager` 管理所有格式
   - MongoDB 存储文档元数据和原始内容
   - Milvus 存储向量和分块数据
+  - 文件服务器存储，生成访问 URL
 
 ### 4. 🎯 分层架构设计
 - **单一职责原则**
@@ -1056,10 +1106,17 @@ from sentence_transformers import SentenceTransformer  # HuggingFace 库
   - 建议：部署多个 LLM 实例进行负载均衡
 
 ### 4. 多模态与多语言
-- ❌ **不支持图片理解**
-  - 无 Vision 模型集成
-  - 无法分析图表、图片、手写内容
-  - 计划：集成 GPT-4V、Claude 3 等多模态模型
+- ✅ **图片理解已支持** 🆕 ⭐
+  - ✅ LLaVA 多模态模型集成（通过 Ollama 部署）
+  - ✅ 物体识别、场景理解、图表分析
+  - ✅ OCR 文字提取（Tesseract，中英文）
+  - ✅ 聊天中上传图片自动分析
+  - ✅ 分析过程流式显示在思考中
+  - ⚠️ 限制：
+    - 手写文字、艺术字体识别效果较差
+    - 复杂图表、数学公式识别可能不准确
+    - 模型能力受限于 LLaVA 7B（可升级更大模型）
+  - 💡 计划：集成更强大的模型（GPT-4V、Claude 3、Qwen-VL）
 
 - ⚠️ **英文支持较弱**
   - Embedding 模型优化为中文（BGE-large-zh-v1.5）
@@ -1150,8 +1207,14 @@ from sentence_transformers import SentenceTransformer  # HuggingFace 库
   - **思考过程可选**（`show_thinking` 参数）
   - **自动创建会话**（不提供 `session_id` 时）
   - **实时推理展示**（Thought → Action → Observation → Answer）
-  - **文件上传支持**（聊天中上传文档）
+  - **文件上传支持** ⭐
+    - **文档上传**：自动解析内容（PDF、Word、PPT 等）
+    - **图片上传**：OCR + LLaVA 多模态分析（JPG、PNG、WebP 等）
+    - **流式图像分析**：分析过程实时显示在思考中
+    - **服务器存储**：文件保存到 `uploads/messages/`，生成唯一 URL
+    - **元数据记录**：`extra_data` 包含 `file_url`、`file_type`、`parsed_content`/`image_analysis_result`
 - ✅ `GET /messages/{session_id}`: 获取会话的所有消息（分页）
+- ✅ `GET /uploads/messages/{filename}`: 访问上传的文件（静态文件服务）🆕
 
 ##### 1.5 日志管理 API（`log_controller.py`）✅ 🆕
 - ✅ `GET /logs/errors`: 获取错误日志
@@ -1287,11 +1350,17 @@ data: {"session_id": "xxx"}
   - ✅ 支持字节流和文件路径提取
   - ✅ 转换后的文件支持图片 OCR 识别
 
-- ⏳ **多模态大模型集成**（计划中）
-  - GPT-4V（OpenAI Vision）
-  - Claude 3（Anthropic）
-  - Qwen-VL（通义千问 Vision）
-  - 图片理解、图表分析、高级 OCR
+- ✅ **多模态大模型集成**（已实现基础版）⭐
+  - ✅ LLaVA（本地部署，通过 Ollama）
+    - 物体识别、场景理解
+    - 图表分析、图片描述
+    - 流式输出分析过程
+    - 支持 MPS/CUDA/CPU
+  - ⏳ 更强大的模型（计划中）：
+    - GPT-4V（OpenAI Vision）
+    - Claude 3（Anthropic）
+    - Qwen-VL（通义千问 Vision）
+    - 更高级的图表分析和 OCR
 
 #### 3. 溯源系统
 - ⏳ **答案溯源**
@@ -1480,6 +1549,47 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+#### 安装 Ollama（用于本地 LLM 和多模态模型）⭐
+
+Ollama 是一个本地运行大语言模型的工具，支持 LLaMA、LLaVA 等模型。
+
+**macOS:**
+```bash
+# 使用 Homebrew 安装
+brew install ollama
+
+# 或者下载安装包
+# https://ollama.com/download/mac
+
+# 启动 Ollama 服务
+ollama serve
+```
+
+**Linux:**
+```bash
+# 使用安装脚本
+curl -fsSL https://ollama.com/install.sh | sh
+
+# 启动 Ollama 服务
+ollama serve
+```
+
+**Windows:**
+1. 下载安装包：https://ollama.com/download/windows
+2. 运行安装程序
+3. Ollama 服务会自动启动
+
+**验证安装：**
+```bash
+# 查看 Ollama 版本
+ollama --version
+
+# 测试运行
+ollama run llama3.2
+```
+
+> 💡 **提示**: Ollama 默认运行在 `http://localhost:11434`。确保 `.env` 中的 `OLLAMA_BASE_URL` 配置正确。
+
 #### 安装 Tesseract OCR（用于图片文字识别）⭐
 
 **macOS:**
@@ -1591,6 +1701,10 @@ TRANSFORMERS_OFFLINE=1  # 使用本地缓存
 HF_HUB_OFFLINE=1        # 禁用在线检查
 # HF_ENDPOINT=https://hf-mirror.com  # 可选：使用镜像
 
+# 图像识别配置 🆕 ⭐
+ENABLE_VISION=true       # 启用图像识别功能
+VISION_MODEL=llava:7b    # LLaVA 模型（通过 Ollama 部署）
+
 # ==================== 数据库配置 ====================
 # MongoDB
 MONGODB_URL=mongodb://root:rootpassword@localhost:27017/
@@ -1640,6 +1754,9 @@ docker run -d --name redis \
 # Ollama 模型
 ollama pull llama3.2
 
+# Ollama 多模态模型（图像识别）⭐
+ollama pull llava:7b
+
 # HuggingFace 模型（会自动下载到 ~/.cache/huggingface/）
 # 首次运行时会自动下载，或者手动：
 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-large-zh-v1.5')"
@@ -1648,6 +1765,10 @@ python -c "from FlagEmbedding import FlagReranker; FlagReranker('BAAI/bge-rerank
 # 下载完成后，在 .env 中设置离线模式
 TRANSFORMERS_OFFLINE=1
 HF_HUB_OFFLINE=1
+
+# 验证 LLaVA 模型
+ollama run llava:7b
+# 在提示符下输入 /bye 退出
 ```
 
 ### 5. 启动 API 服务器 🆕
@@ -1724,7 +1845,11 @@ npm run dev
    - 创建新会话或选择已有会话
    - 输入问题，体验实时流式 AI 回复
    - 可选显示 AI 思考过程
-   - 上传文档到知识库
+   - **文件上传** ⭐：
+     - 📄 上传文档（PDF、Word、PPT 等）→ 自动解析内容
+     - 🖼️ 上传图片（JPG、PNG、WebP 等）→ OCR + LLaVA 分析
+     - 📊 分析过程实时显示在思考中
+     - 💾 文件保存到服务器，可随时访问
 
 3. 🛠️ **管理后台**（管理员）：
    - 访问 `/admin/users` 管理用户
@@ -1802,10 +1927,11 @@ plantform/
 │   │   │   ├── user_info_sever.py    # 用户管理服务
 │   │   │   ├── document_sever.py     # 文档管理服务（权限、批量）⭐
 │   │   │   ├── session_sever.py      # 会话管理服务
-│   │   │   └── message_sever.py      # 消息管理服务（流式、权限）⭐
-│   │   └── json_load/      # JSON 数据加载服务 🆕
-│   │       ├── log_sever.py          # 日志服务
-│   │       └── monitor_sever.py      # 监控服务
+│   │   │   └── message_sever.py      # 消息管理服务（流式、权限、文件）⭐
+│   │   ├── json_load/      # JSON 数据加载服务 🆕
+│   │   │   ├── log_sever.py          # 日志服务
+│   │   │   └── monitor_sever.py      # 监控服务
+│   │   └── image_service.py # 图像识别服务（LLaVA + OCR）🆕 ⭐
 │   ├── monitor/            # 监控系统 ✅ 🆕 ⭐
 │   │   ├── __init__.py
 │   │   ├── performance_monitor.py    # 性能监控（装饰器）
@@ -1898,6 +2024,9 @@ plantform/
 │   └── docker-compose.yml
 ├── mongodb/                # MongoDB 部署 ✅ 🆕
 │   └── docker-compose.yml
+├── uploads/                # 文件上传目录 🆕 ⭐
+│   ├── documents/          # 文档上传（知识库）
+│   └── messages/           # 聊天中上传的文件（图片、文档）
 ├── web/                    # 前端项目 ✅ 🆕 ⭐
 │   └── plantform_vue/      # Vue 3 前端
 │       ├── public/         # 静态资源
@@ -1980,11 +2109,19 @@ mongosh mongodb://root:rootpassword@localhost:27017/
 # 查看已下载的 Ollama 模型
 ollama list
 
-# 拉取 Ollama 模型
+# 拉取 Ollama LLM 模型
 ollama pull llama3.2
+
+# 拉取 Ollama 多模态模型（图像识别）⭐
+ollama pull llava:7b
 
 # 运行 Ollama 模型测试
 ollama run llama3.2
+
+# 运行 LLaVA 模型测试（支持图片输入）⭐
+ollama run llava:7b
+# 在提示符下可以输入图片路径和问题
+# 例如: What's in this image? /path/to/image.jpg
 ```
 
 ---
@@ -2073,3 +2210,66 @@ ollama run llama3.2
   - 关注 `ms_per_10k_tokens` 指标（Embedding 性能）
   - 监控 Milvus 搜索耗时（> 100ms 需优化索引）
   - LLM 各阶段耗时分析（think/action/answer 占比）
+
+### 10. 图像识别与多模态 🆕 ⭐
+- **LLaVA 模型部署**：
+  - 通过 Ollama 本地部署：`ollama pull llava:7b`
+  - 配置 `.env`：`ENABLE_VISION=true`, `VISION_MODEL=llava:7b`
+  - 支持 MPS（Apple Silicon）、CUDA、CPU
+- **流式输出**：
+  - 使用 `_llava_analyze_stream` 生成器方法
+  - 分析过程逐字流式传输，显示在 AI 思考中
+  - 不要使用阻塞式的 `process_image` 方法
+- **图片格式支持**：
+  - 使用 `SUPPORTED_IMAGE_FORMATS` 常量（定义在 `constants.py`）
+  - 图片通过 Base64 传输给 LLaVA
+  - OCR 识别文字使用 Tesseract（需安装）
+- **错误处理**：
+  - LLaVA 失败时降级为纯 OCR
+  - OCR 失败时返回友好提示
+  - 记录详细日志便于调试
+
+### 11. 文件上传与存储 🆕 ⭐
+- **文件命名**：
+  - 使用 `uuid.uuid4()` 生成唯一文件名
+  - 保留原始扩展名：`{uuid}{extension}`
+  - 示例：`a1b2c3d4-e5f6-7g8h.jpg`
+- **存储路径**：
+  - 文档上传：`uploads/documents/`
+  - 聊天文件：`uploads/messages/`
+  - 通过 FastAPI `StaticFiles` 提供访问
+- **URL 生成**：
+  - 格式：`http://host:port/uploads/{type}/{filename}`
+  - 存储在 `extra_data.file_url`
+- **元数据记录**：
+  - `file_url`: 访问 URL
+  - `file_type`: 文件类型（扩展名）
+  - `file_name`: 原始文件名
+  - `file_size`: 文件大小（字节）
+  - `parsed_content`: 文档解析内容
+  - `image_analysis_result`: 图像分析结果
+- **最佳实践**：
+  - 在 Service 层处理文件保存逻辑
+  - Controller 层只负责接收 `UploadFile`
+  - 使用异步 I/O（`aiofiles`）保存大文件
+
+### 12. MongoDB 连接池配置 🆕 ⭐
+- **单例模式**：
+  - 使用 `__new__` 方法确保全局唯一实例
+  - `_initialized` 标志防止重复初始化
+- **连接池参数**：
+  - `maxPoolSize`: 最大连接数（默认 20，可调整）
+  - `minPoolSize`: 最小连接数（默认 5）
+  - `maxIdleTimeMS`: 空闲连接保持时间（默认 60 秒）
+- **为什么有多个连接**：
+  - MongoDB 驱动使用连接池技术
+  - 多个连接支持并发请求
+  - 连接数 ≠ 客户端实例数
+- **配置建议**：
+  - 小型应用（<100 并发）：`maxPoolSize=20`, `minPoolSize=5`
+  - 中型应用（100-1000 并发）：`maxPoolSize=50`, `minPoolSize=10`
+  - 大型应用（>1000 并发）：`maxPoolSize=100`, `minPoolSize=20`
+- **监控**：
+  - 使用 `db.serverStatus()` 查看连接统计
+  - 监控 `current`, `available`, `totalCreated`
+  - 根据实际负载动态调整

@@ -180,7 +180,7 @@ class ChatService:
                 print(chunk, end="")
             
             # ✅ Agent 对话（工具调用）🆕
-            from pkg.agent_prompt.agent_tool import knowledge_search
+            from pkg.agent_tools import knowledge_search
             
             answer = chat_service.chat(
                 user_message="奖学金评定标准是什么？",

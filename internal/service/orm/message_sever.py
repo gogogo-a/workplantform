@@ -19,17 +19,14 @@ from internal.chat_service.chat_service import ChatService
 from internal.rag.rag_service import rag_service
 from pkg.model_list import DEEPSEEK_CHAT
 from pkg.agent_prompt.prompt_templates import AGENT_RAG_PROMPT
-from pkg.agent_prompt.agent_tool import knowledge_search
+from pkg.agent_tools import get_available_tools
 from log import logger
-from pkg.constants.constants import MILVUS_COLLECTION_NAME, SUMMARY_MESSAGE_THRESHOLD
+from pkg.constants.constants import MILVUS_COLLECTION_NAME, SUMMARY_MESSAGE_THRESHOLD, SUPPORTED_IMAGE_FORMATS
 from internal.monitor import record_performance
 
 # 文件上传配置
 MESSAGE_FILES_DIR = "uploads/message_files"  # 消息文件上传目录
 os.makedirs(MESSAGE_FILES_DIR, exist_ok=True)  # 确保目录存在
-
-# 支持的图片格式
-SUPPORTED_IMAGE_FORMATS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif'}
 
 class MessageService:
     """消息管理服务（单例模式）"""
@@ -311,78 +308,6 @@ class MessageService:
             logger.error(f"获取会话历史失败: {e}", exc_info=True)
             return []
     
-    async def _generate_ai_reply(
-        self,
-        session_id: str,
-        user_id: str,
-        user_message: str,
-        history: List[Dict[str, Any]],
-        stream: bool = False
-    ) -> str:
-        """
-        生成 AI 回复（使用 ChatService + Agent + RAG）
-        参考 test_full_rag_qa.py 的实现
-        
-        Args:
-            session_id: 会话ID
-            user_id: 用户ID
-            user_message: 用户消息
-            history: 历史记录
-            stream: 是否流式返回
-            
-        Returns:
-            str: AI 回复内容（非流式）或空字符串（流式，内容通过 yield 返回）
-        """
-        try:
-            logger.info(f"开始生成 AI 回复（Agent + RAG）: session={session_id}, stream={stream}")
-            
-            # 初始化 ChatService
-            # 注意：auto_summary=False，因为我们在数据库层面实现了持久化总结（send_type=2）
-            chat_service = ChatService(
-                session_id=session_id,
-                user_id=user_id,
-                model_name=DEEPSEEK_CHAT.name,
-                model_type=DEEPSEEK_CHAT.model_type,
-                system_prompt=AGENT_RAG_PROMPT,  # 使用 Agent RAG 提示词
-                tools=[knowledge_search],  # 传递 RAG 工具
-                auto_summary=False,  # 关闭底层自动总结，避免与数据库总结重复
-                max_history_count=10  # 保持最近10条历史
-            )
-            
-            # 🔥 加载历史记录时添加上下文分隔（排除最后一条，因为是当前用户消息）
-            if len(history) > 1:
-                # 添加历史对话标记
-                chat_service.add_to_history("system", "--- 以下是历史对话记录---")
-                for msg in history[:-1]:
-                    chat_service.add_to_history(msg['role'], msg['content'])
-                # 添加当前问题标记
-                chat_service.add_to_history("system", "--- 以上是历史对话，以下是用户当前的新问题 ---")
-                logger.info(f"已加载 {len(history)-1} 条历史记录")
-            
-            # 准备 Agent 工具
-            agent_tools = {
-                "knowledge_search": knowledge_search
-            }
-            
-            # 调用 AI 生成回复（与 test_full_rag_qa.py 一致）
-            logger.info(f"调用 ChatService.chat() 生成回复...")
-            ai_reply = chat_service.chat(
-                user_message=user_message,
-                use_agent=True,  # 启用 Agent
-                agent_tools=agent_tools,  # 传递工具
-                save_only_answer=True,  # 只保存问答，不保存思考过程
-                max_iterations=5,  # 最大迭代次数
-                verbose=True,  # 显示推理过程
-                stream=stream  # 流式或非流式
-            )
-            
-            logger.info(f"AI 回复生成成功: {len(ai_reply) if isinstance(ai_reply, str) else 'streaming'}")
-            return ai_reply
-            
-        except Exception as e:
-            logger.error(f"生成 AI 回复失败: {e}", exc_info=True)
-            return "抱歉，我现在无法回答您的问题，请稍后再试。"
-    
     async def _analyze_image_stream(
         self,
         image_bytes: bytes,
@@ -552,13 +477,13 @@ class MessageService:
             
             # 🔥 获取用户权限信息
             user_info = await UserInfoModel.find_one(UserInfoModel.uuid == user_id)
-            user_permission = user_info.is_admin if user_info else 0
-            logger.info(f"用户权限: user_id={user_id}, is_admin={user_permission}")
+            is_admin = user_info.is_admin if user_info else False
+            user_permission = 1 if is_admin else 0
+            logger.info(f"用户权限: user_id={user_id}, is_admin={is_admin}, permission={user_permission}")
             
-            # 🔥 创建绑定了用户权限的 knowledge_search 工具（使用包装函数而不是 partial）
-            def knowledge_search_with_permission(query: str, top_k: int = 5, use_reranker: bool = True):
-                """知识库搜索工具（已绑定用户权限）"""
-                return knowledge_search(query=query, top_k=top_k, use_reranker=use_reranker, user_permission=user_permission)
+            # 🔥 从工具层获取用户可用的工具（自动处理权限过滤和参数绑定）
+            available_tools = get_available_tools(is_admin=is_admin, user_permission=user_permission)
+            tools_list = list(available_tools.values())
             
             # 注意：auto_summary=False，因为我们在数据库层面实现了持久化总结（send_type=2）
             chat_service = ChatService(
@@ -567,7 +492,7 @@ class MessageService:
                 model_name=DEEPSEEK_CHAT.name,
                 model_type=DEEPSEEK_CHAT.model_type,
                 system_prompt=AGENT_RAG_PROMPT,
-                tools=[knowledge_search_with_permission],  # 🔥 使用绑定了权限的工具
+                tools=tools_list,  # 🔥 使用工具层提供的工具列表
                 auto_summary=False,  # 关闭底层自动总结，避免与数据库总结重复
                 max_history_count=10
             )
@@ -606,10 +531,10 @@ class MessageService:
                 
                 event_queue.put((event_type, content))
             
-            # 创建 Agent 并传入回调（使用绑定了权限的工具）
+            # 创建 Agent 并传入回调（使用工具层提供的工具字典）
             agent = ReActAgent(
                 llm_service=chat_service.llm_service,
-                tools={"knowledge_search": knowledge_search_with_permission},  # 🔥 使用绑定了权限的工具
+                tools=available_tools,  # 🔥 使用工具层提供的工具字典
                 max_iterations=5,
                 verbose=False,
                 callback=callback
@@ -1022,7 +947,6 @@ AI回答：{ai_answer[:200]}...
             if file_bytes and file_name:
                 from pathlib import Path as PathlibPath
                 extension = PathlibPath(file_name).suffix.lower()
-                SUPPORTED_IMAGE_FORMATS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif'}
                 
                 if extension in SUPPORTED_IMAGE_FORMATS:
                     # 图片文件：流式分析

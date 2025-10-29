@@ -16,15 +16,12 @@ from log import logger
 import json as json_module
 from typing import Optional
 from pathlib import Path as PathlibPath
-
+from pkg.constants.constants import SUPPORTED_IMAGE_FORMATS
 # 使用全局JWT中间件，不需要路由级别的dependencies
 router = APIRouter(
     prefix="/messages", 
     tags=["消息管理"]
 )
-
-# 支持的图片格式
-SUPPORTED_IMAGE_FORMATS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif'}
 
 
 @router.post("", summary="发送消息并获取 AI 回复（统一流式返回，支持文件上传）")

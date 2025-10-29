@@ -124,3 +124,10 @@ SECRET_KEY = os.getenv("SECRET_KEY", "default_secret_key_please_change_in_produc
 # 图片内容识别（使用 Ollama LLaVA）
 ENABLE_VISION = os.getenv("ENABLE_VISION", "true").lower() == "true"
 VISION_MODEL = os.getenv("VISION_MODEL", "llava:7b")
+
+# 支持的图片格式
+SUPPORTED_IMAGE_FORMATS = {'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'}
+
+# ==================== 百度千帆配置 ====================
+# 百度千帆 API Token（用于网页搜索等服务）
+BAIDU_TOKEN = os.getenv("BAIDU_TOKEN", "")

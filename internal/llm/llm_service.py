@@ -8,7 +8,7 @@ from typing import Optional, List, Dict, Any, Callable
 import asyncio
 from pkg.model_list import ModelManager, LLAMA_3_2  # 默认模型配置
 from pkg.agent_prompt.prompt_templates import get_prompt, SUMMARY_PROMPT
-from pkg.agent_prompt.agent_tool import (
+from pkg.agent_tools import (
     get_tools_info,
     get_prompt_for_tools
 )
